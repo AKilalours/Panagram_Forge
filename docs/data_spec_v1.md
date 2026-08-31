@@ -486,3 +486,36 @@ training data, because it is held out.
 
 Remaining open questions from section 10: item 3 (does smoothing help) and item 4
 (reserve pool size). Neither blocks a phase.
+
+### v1.3 (2026-08-31) - mined hard negatives are split at the cluster level
+
+**Change.** Section 4 gains a rule for documents that enter training through mining.
+
+Mined documents come from the reserve pool, which sits outside train/val/test and
+therefore carries no split. Two obvious options are both wrong:
+
+- *All mined documents to train.* There is then no held-out hard-negative set, and no way
+  to tell whether mining generalized or simply memorized the examples it was given.
+- *Split mined documents randomly.* Worse than useless. Documents within one failure
+  cluster are near-identical by construction, so a random split places near-duplicates of
+  the same failure on both sides. The held-out score then measures memorization while
+  looking like generalization.
+
+**Rule.** Mined failures are split by CLUSTER. Whole failure modes go to training; other
+whole modes are held out untouched and never enter any training set. A model that
+improves on held-out clusters has generalized to failure modes it has not seen. Under a
+document-level split those two outcomes are indistinguishable.
+
+Default holdout fraction: 0.25 of clusters, assigned by a deterministic hash of the
+cluster id so successive rounds stay comparable. Held-out modes are not fixed this round;
+they can be released into training in a later round and the mined ledger tracks that.
+
+**Known limitation, recorded not hidden.** Proportional selection guarantees coverage of
+CLUSTERS, not of true failure modes. If clustering merges two modes, the smaller one is
+starved regardless of how fair the selection policy is, and nothing downstream can
+detect it. Measured on a synthetic five-mode set with the offline hashing embedder: one
+mode was absorbed into another and never selected, and one mode was split across two
+clusters and over-weighted. `Atlas.quality_warnings()` therefore reports low silhouette,
+dominant clusters, duplicate cluster labels and the use of a non-semantic embedder, so a
+mining report cannot present clean-looking cluster shares without also showing why they
+may be wrong.

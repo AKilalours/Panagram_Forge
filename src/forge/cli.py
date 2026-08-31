@@ -96,10 +96,21 @@ def evaluate(config: str = typer.Option(..., "--config")) -> None:
 
 
 @app.command()
-def mine(config: str = typer.Option(..., "--config")) -> None:
+def mine(
+    config: str = typer.Option(..., "--config"),
+    reserve: str = typer.Option("data/reserve", "--reserve", help="reserve pool parquet root"),
+    out: str = typer.Option("reports/experiments", "--out"),
+    model: str = typer.Option(None, "--model", help="path to a trained detector"),
+) -> None:
     """Phase 4: hard negative mining pass over the human reserve pool."""
     cfg.load(config)
-    _not_yet("4", "hard negative mining")
+    if model is None:
+        raise PhaseNotImplemented(
+            "mining needs a trained detector to score the reserve pool, and Phase 3 "
+            "training has not run. The mining, atlas and selection code is implemented "
+            "and tested against synthetic failure structure; pass --model once a "
+            "checkpoint exists. See docs/roadmap.md."
+        )
 
 
 @app.command()

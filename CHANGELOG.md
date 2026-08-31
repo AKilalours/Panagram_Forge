@@ -60,3 +60,34 @@ Bugs found and fixed:
   reports the reason when a splice cannot be built.
 
 Not done, and not claimed: the training fit loop. It cannot be verified without a GPU.
+
+## Phase 4 - hard negative mining and the Failure Atlas
+
+Spec amended to v1.3: mined hard negatives are split at the CLUSTER level, not the
+document level. Documents within a failure cluster are near-identical, so a random split
+puts near-duplicates on both sides and the held-out score measures memorization while
+looking like generalization.
+
+Implemented and tested:
+- mining.py: Scorer protocol so mining is testable with a fake scorer, confidence gating
+  above the production threshold, false-negative mining as well as false-positive, and a
+  ledger so repeat rounds do not re-mine the same failures
+- embedding.py: deterministic offline hashing embedder plus a sentence-transformers
+  embedder for real runs
+- clustering.py: HDBSCAN when installed, seeded numpy k-means++ otherwise, with the
+  method recorded so a report cannot present k-means output as density-based
+- atlas.py: cluster summaries built from metadata only (no model, so no hallucinated
+  failure modes), plus quality_warnings() reporting the atlas's own weaknesses
+- selection.py: proportional-across-clusters apportionment with a per-cluster floor, and
+  deterministic cluster-level holdout
+- run.py: one full turn of the flywheel as a committable JSON artifact
+
+Measured offline on a five-mode synthetic failure set, budget 200:
+  proportional selection covered 4 of 5 modes; global top-k covered 1 of 5.
+
+Known limitation, recorded: selection guarantees coverage of clusters, not of true
+failure modes. On that same set the smallest mode was absorbed into another cluster and
+never selected, and one mode was split across two clusters and over-weighted. The atlas
+flags all three conditions rather than hiding them.
+
+`forge mine` refuses to run without a checkpoint rather than producing anything.

@@ -16,7 +16,7 @@
 | 1 | FORGE-HUMAN ingestion (FineWeb, FineWeb-Edu, public domain) | pipeline built and verified offline; real ingest not yet run |
 | 2 | Synthetic mirror engine, FORGE-MIRROR v0.1 | engine built and verified offline; real generation not yet run |
 | 3 | Baseline detector (encoder + document head + token head) | model, alignment, token labels, calibration and evaluation lab built and tested; **fit loop needs a GPU** |
-| 4 | Hard negative mining loop | not started |
+| 4 | Hard negative mining loop | mining, atlas, clustering and selection built and tested against synthetic failure structure; **needs a trained model to mine against** |
 | 5 | External evaluation (RAID, MAGE, HC3) | not started |
 | 6 | Adversarial laboratory | not started |
 | 7 | Distributed training (FSDP / DeepSpeed / Ray), profiling | not started |
