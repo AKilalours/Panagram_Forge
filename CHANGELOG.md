@@ -91,3 +91,39 @@ never selected, and one mode was split across two clusters and over-weighted. Th
 flags all three conditions rather than hiding them.
 
 `forge mine` refuses to run without a checkpoint rather than producing anything.
+
+## Phase 5 - external evaluation
+
+Loaders for RAID, MAGE and HC3 against the schemas recorded in data_spec_v1 section 1.1,
+pinned as constants so an upstream schema change fails loudly instead of producing a
+plausible wrong number. Verified against synthetic fixtures; the real datasets are
+unreachable from the development environment, so the parsing is tested and the download
+is not.
+
+- RAID: human rows are label 0, code/Czech/German excluded from the headline, attacked
+  variants collapsed by source_id so one base text is not counted thirteen times
+- MAGE: load-time polarity assertion that also catches a near-random detector
+- HC3: list-valued answer fields expanded, every answer from one question sharing a group
+- contamination: exact hashing through the SAME normalisation ingestion used, plus
+  MinHash near-duplicate checking at a deliberately looser 0.5 threshold
+
+## Phase 6 - adversarial laboratory
+
+Eight deterministic, seeded, severity-parameterised attacks plus four that require a
+model and refuse rather than faking. Lab runner produces the delta-FNR table in both
+preprocessing conditions.
+
+Bugs found and fixed:
+- the severity mechanism combined `index % step == 0` with a random bit, halving the
+  effective rate at best and collapsing to zero for sparse targets. synonym_swap and
+  article_deletion perturbed NOTHING at their configured severities, which would have
+  reported as perfect robustness. Severity now means "probability an eligible position is
+  perturbed" via a per-position deterministic uniform.
+- preserves_meaning() compared raw token overlap, so readable homoglyph attacks scored a
+  Jaccard near zero and were discarded as vandalism. That filters out exactly the attacks
+  that work. Homoglyphs are now folded before comparison.
+- paragraph_insert was flagged as defused by preprocessing; measurement showed
+  normalize() only collapses runs of 3+ newlines, so a single inserted blank line
+  survives. Flag corrected, and the flags are now cross-checked against measurement.
+- config/code drift: grammar_edit was configured but not implemented, and three
+  implemented attacks were missing from the config. Now checked in both directions.

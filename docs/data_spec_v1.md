@@ -519,3 +519,53 @@ clusters and over-weighted. `Atlas.quality_warnings()` therefore reports low sil
 dominant clusters, duplicate cluster labels and the use of a non-semantic embedder, so a
 mining report cannot present clean-looking cluster shares without also showing why they
 may be wrong.
+
+### v1.4 (2026-08-31) - adversarial measurement and contamination thresholds
+
+**1. Every attack is measured in two preprocessing conditions.**
+
+FORGE's ingestion normalisation neutralises several attacks before the model sees the
+text. Measured on the offline attack suite, `whitespace_perturb`, `zero_width_insert` and
+`paragraph_insert`-style perturbations are removed or reduced by `normalize()`, while
+`homoglyph_substitute` is NOT: Cyrillic look-alikes are distinct letters, not
+compatibility forms, so NFKC leaves them untouched.
+
+A single robustness number is therefore meaningless and wrong in a predictable direction:
+
+    preprocessed only -> credits two lines of normalize() to the model; any deployment
+                         that skips preprocessing is unprotected and the report hides it
+    raw only          -> describes a threat the production path already handles
+
+The report carries both columns and their difference, `preprocessing_benefit`, which
+states the value of the preprocessing defence as a number instead of assuming it.
+
+**2. Attack validity is checked with homoglyphs folded.**
+
+A token-overlap validity check systematically misjudges character-level attacks. Cyrillic
+substitutions are invisible to a reader but break every word containing them, so a
+perfectly readable homoglyph attack scores a Jaccard near zero and would be discarded as
+vandalism, filtering out precisely the attacks that work. `preserves_meaning()` folds
+look-alikes back to Latin before comparing. That fold is for validity checking only and
+never touches training or inference input.
+
+**3. No-op attacks are excluded from scores, not counted as defences.**
+
+A sparse-target attack such as `synonym_swap` genuinely changes nothing on a document
+with no substitutable words. Scoring that as a successful defence reports the attack
+lexicon's coverage as the model's robustness. No-ops are counted and reported separately.
+
+**4. The contamination near-duplicate threshold is 0.5, looser than deduplication's 0.8.**
+
+The error costs run in opposite directions:
+
+    dedup false positive         -> two distinct documents merged, training data lost
+    contamination false negative -> the external result is invalid and nobody knows
+
+A benchmark document with a sentence of site boilerplate appended sits at a true Jaccard
+of about 0.75, which 0.8 misses and 0.5 catches. Over-flagging costs a manual look;
+under-flagging costs the headline claim. Reusing 0.8 here would inherit a threshold tuned
+for the opposite trade.
+
+**5. RAID variants are collapsed by `source_id` before scoring.** The twelve attacks are
+applied to the same base generations, so scoring them independently counts one base text
+up to thirteen times and lets a single unusually easy or hard text move the number.

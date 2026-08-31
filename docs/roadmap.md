@@ -10,8 +10,8 @@ done when the criterion is measured and the measurement is committed.
 | 2 | FORGE-MIRROR v0.1 | engine **done and verified offline**; exit needs 400k real mirrors, pinned revisions, rejection rate reported, length/topic match distributions plotted |
 | 3 | Baseline detector | components **done and tested**; exit needs FPR, FNR, AUROC, ECE on R1 committed with the run that produced them, which requires a GPU |
 | 4 | Hard negative loop | components **done and tested**; exit needs a first mining pass producing >=10 distinct failure clusters with acceptable silhouette, and a retrained model's FPR compared to Phase 3 at equal data budget, on both trained and HELD-OUT failure clusters |
-| 5 | External evaluation | RAID-extra, MAGE-test, HC3 numbers with a passing contamination check |
-| 6 | Adversarial lab | delta-FNR per attack table, ours and RAID's |
+| 5 | External evaluation | loaders **done and tested against schema fixtures**; exit needs RAID-extra, MAGE-test and HC3 numbers with a passing contamination check, which requires network access and a trained model |
+| 6 | Adversarial lab | attacks and runner **done and tested**; exit needs the delta-FNR table in both preprocessing conditions for a real model, plus RAID's 12 attacks, plus a real paraphrase model for the 4 model-based attacks |
 | 7 | Distributed + profiling | FSDP vs DeepSpeed throughput on identical config; one profiled bottleneck fixed with before/after traces |
 | 8 | Production | API + release gate + monitoring + UI; gate blocks at least one real candidate |
 

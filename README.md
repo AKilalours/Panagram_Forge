@@ -17,8 +17,8 @@
 | 2 | Synthetic mirror engine, FORGE-MIRROR v0.1 | engine built and verified offline; real generation not yet run |
 | 3 | Baseline detector (encoder + document head + token head) | model, alignment, token labels, calibration and evaluation lab built and tested; **fit loop needs a GPU** |
 | 4 | Hard negative mining loop | mining, atlas, clustering and selection built and tested against synthetic failure structure; **needs a trained model to mine against** |
-| 5 | External evaluation (RAID, MAGE, HC3) | not started |
-| 6 | Adversarial laboratory | not started |
+| 5 | External evaluation (RAID, MAGE, HC3) | loaders and contamination checking built and tested against schema fixtures; **datasets unreachable from the dev environment** |
+| 6 | Adversarial laboratory | 8 offline attacks + lab runner built and tested; 4 model-based attacks refuse rather than fake |
 | 7 | Distributed training (FSDP / DeepSpeed / Ray), profiling | not started |
 | 8 | Production serving, release gate, monitoring, UI | not started |
 

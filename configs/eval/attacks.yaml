@@ -1,13 +1,37 @@
-# Controlled transformations. Ours are controlled so we know exactly what changed;
-# RAID's 12 attacks are the independent external check.
+# Controlled transformations for the adversarial laboratory.
+#
+# Ours are controlled so a degradation can be attributed to one specific transformation.
+# RAID's 12 attacks are the independent external check, because attacks we wrote
+# ourselves are attacks we implicitly designed around.
+#
+# `defused_by_preprocessing` records whether FORGE's own ingestion normalisation removes
+# the perturbation before the model sees it. Every attack is measured in BOTH conditions:
+# reporting only the preprocessed number credits normalize() to the model, and reporting
+# only the raw number describes a threat the production path already handles.
+#
+# This file is cross-checked against src/forge/adversarial/attacks.py in
+# tests/unit/test_attacks.py, in both directions, so config and code cannot drift.
 spec_version: data_spec_v1
+
 attacks:
-  - { id: paraphrase_llm,      severity: [light, heavy] }
-  - { id: sentence_reorder,    severity: [light, heavy] }
-  - { id: synonym_swap,        rate: [0.05, 0.15] }
-  - { id: whitespace_perturb,  rate: [0.02] }
-  - { id: homoglyph_substitute, rate: [0.01, 0.05] }
-  - { id: zero_width_insert,   rate: [0.01] }
-  - { id: grammar_edit,        severity: [light] }
-  - { id: humanizer_tool,      note: requires a real humanizer service; Phase 6 }
-  - { id: ai_assisted_edit,    note: human text partially rewritten by an LLM }
+  # Removed by ingestion normalisation
+  - { id: whitespace_perturb,   severities: [0.02, 0.10],       defused_by_preprocessing: true,  runnable_offline: true }
+  - { id: zero_width_insert,    severities: [0.01, 0.05],       defused_by_preprocessing: true,  runnable_offline: true }
+
+  # Survive ingestion normalisation
+  - { id: homoglyph_substitute, severities: [0.01, 0.05, 0.20], defused_by_preprocessing: false, runnable_offline: true,
+      note: "NFKC does NOT remove Cyrillic look-alikes; they are distinct letters, not compatibility forms" }
+  - { id: paragraph_insert,     severities: [0.2, 0.5],         defused_by_preprocessing: false, runnable_offline: true,
+      note: "normalize() collapses runs of 3+ newlines, so a single inserted blank line survives" }
+  - { id: synonym_swap,         severities: [0.05, 0.15],       defused_by_preprocessing: false, runnable_offline: true }
+  - { id: sentence_reorder,     severities: [0.1, 0.3],         defused_by_preprocessing: false, runnable_offline: true }
+  - { id: case_perturb,         severities: [0.02, 0.10],       defused_by_preprocessing: false, runnable_offline: true }
+  - { id: article_deletion,     severities: [0.2, 0.5],         defused_by_preprocessing: false, runnable_offline: true }
+
+  # Need a model. Deliberately not faked: a stub paraphraser produces a meaningless
+  # robustness number, and paraphrase is the attack that matters most.
+  - { id: paraphrase_llm,       severities: [1.0], defused_by_preprocessing: false, runnable_offline: false }
+  - { id: humanizer_tool,       severities: [1.0], defused_by_preprocessing: false, runnable_offline: false }
+  - { id: ai_assisted_edit,     severities: [1.0], defused_by_preprocessing: false, runnable_offline: false }
+  - { id: grammar_edit,         severities: [1.0], defused_by_preprocessing: false, runnable_offline: false,
+      note: "the attack most likely to be applied innocently by a real user, not an evader" }
