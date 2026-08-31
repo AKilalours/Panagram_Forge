@@ -422,3 +422,31 @@ These are recorded rather than guessed. Each blocks a specific later phase, not 
 4. **Reserve pool size for mining.** 5M is a guess. The right number is whatever
    makes the FP rate at the mining threshold yield enough distinct clusters. Revisit
    after the first mining pass.
+
+---
+
+## 11. Spec changelog
+
+### v1.1 (2026-08-31) - stage reorder in section 7
+
+**Change.** The length filter moves from position 5 to position 2, ahead of language
+identification. New order: schema validation, unicode normalization, markup removal,
+length filter, language id, quality scoring, PII, exact dedup, near-duplicate dedup,
+domain classification, split assignment, Parquet write.
+
+**Why.** Found during the Phase 1 offline verification run. A fixture document reading
+`"Too short."` was rejected with reason `language`, because language detection ran
+first and could not identify a two-word string. The rejection was technically true and
+completely unhelpful: the ingestion report attributed a length failure to a language
+failure. At 5M documents that misattribution would hide the real shape of what the
+pipeline is discarding.
+
+Two supporting reasons. Running language detection on documents that are about to be
+dropped for length is wasted compute, and length is the only gate in the pipeline that
+is unambiguous and tokenizer-free, so it is the correct cheapest-first filter.
+
+**What did not change.** Dedup still runs before split assignment, and markup removal
+still runs before the length filter. Both of those orderings are correctness
+properties, not performance choices.
+
+**Regression guard.** `tests/unit/test_pipeline.py::test_short_document_is_rejected_for_length_not_language`.

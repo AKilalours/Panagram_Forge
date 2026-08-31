@@ -1,0 +1,25 @@
+# Offline smoke configuration. Exercises the full Phase 1 path with no network.
+# This is NOT a training dataset. See scripts/make_fixture_corpus.py.
+spec_version: data_spec_v1
+dataset_version: v0.0-smoke
+
+sources:
+  - id: local
+    source_id: fixture
+    path: data/raw/fixture/corpus.jsonl
+    license: unknown   # non-redistributable, so metadata_only.parquet is exercised
+    domain: web
+    register: informational
+    train_share: 1.0
+
+targets:
+  human_train: 200
+
+cleaning:
+  language_score_min: 0.85
+  processing_version: clean_v1
+
+splits:
+  salt: forge-v1
+  ratios: { train: 0.80, val: 0.10, test: 0.10 }
+  group_key: source_group_id

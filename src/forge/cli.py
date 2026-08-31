@@ -40,10 +40,21 @@ def spec_check() -> None:
 
 
 @app.command()
-def ingest(config: str = typer.Option(..., "--config")) -> None:
+def ingest(
+    config: str = typer.Option(..., "--config"),
+    out: str = typer.Option("data/silver", "--out", help="output root for Parquet"),
+    total: int = typer.Option(None, "--total", help="override the document target (smoke runs)"),
+) -> None:
     """Phase 1: build FORGE-HUMAN from the configured sources."""
-    cfg.load(config)
-    _not_yet("1", "ingestion")
+    from forge.ingestion.run import ingest as _ingest
+
+    result = _ingest(config, out_root=out, total=total)
+    typer.secho(f"kept {len(result.docs)} documents", fg=typer.colors.GREEN)
+    for sid, st in result.stats_by_source.items():
+        typer.echo(f"  {sid}: seen={st['seen']} kept={st['kept']} rejected={st['rejected']}")
+    for part, n in sorted(result.partitions.items()):
+        typer.echo(f"  parquet {part}: {n}")
+    typer.echo(f"  manifest: {result.manifest_path}")
 
 
 @app.command()
