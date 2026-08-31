@@ -18,3 +18,5 @@ checkpoints/
 *.safetensors
 *.onnx
 .DS_Store
+.Rhistory
+.venv/
