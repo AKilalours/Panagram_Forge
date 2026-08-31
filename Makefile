@@ -1,4 +1,4 @@
-.PHONY: help setup install-data install-train lint fmt test spec ingest mirror train eval mine serve up down clean
+.PHONY: help setup install-data install-train lint fmt test spec smoke ingest mirror train eval mine serve up down clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -27,6 +27,10 @@ test:             ## Run the test suite
 
 spec:             ## Validate that configs match the frozen Data Spec v1
 	./.venv/bin/python -m forge.cli spec-check
+
+smoke:            ## Offline end-to-end run of the Phase 1 pipeline on a fixture corpus
+	./.venv/bin/python scripts/make_fixture_corpus.py --n 300
+	./.venv/bin/python -m forge.cli ingest --config configs/data/local_smoke.yaml --out data/silver/smoke --total 5000
 
 ingest:           ## Phase 1: build FORGE-HUMAN from configured sources
 	./.venv/bin/python -m forge.cli ingest --config configs/data/human.yaml

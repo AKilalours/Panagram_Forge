@@ -13,7 +13,7 @@
 | Phase | What it is | State |
 |---|---|---|
 | 0 | Repo scaffold, Data Spec v1 frozen | done |
-| 1 | FORGE-HUMAN ingestion (FineWeb, FineWeb-Edu, public domain) | not started |
+| 1 | FORGE-HUMAN ingestion (FineWeb, FineWeb-Edu, public domain) | pipeline built and verified offline; real ingest not yet run |
 | 2 | Synthetic mirror engine, FORGE-MIRROR v0.1 | not started |
 | 3 | Baseline detector (encoder + document head + token head) | not started |
 | 4 | Hard negative mining loop | not started |
@@ -38,9 +38,19 @@ release gate <- evaluation lab <- training <- targeted dataset
 
 ```bash
 make setup          # venv + editable install
-make test           # verify the scaffold runs
+make test           # 55 tests
 make spec-check     # configs must match the frozen Data Spec v1
+
+# offline smoke run of the full Phase 1 pipeline, no network needed
+make smoke
+
+# the real thing (needs network and the data extra)
+make install-data
+make ingest
 ```
+
+`make smoke` generates a synthetic fixture corpus and runs ingestion end to end.
+The fixture is a pipeline test, never training data.
 
 ## Key design decisions
 
