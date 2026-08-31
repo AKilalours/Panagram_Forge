@@ -1,4 +1,4 @@
-.PHONY: help setup install-data install-train lint fmt test spec smoke ingest mirror train eval mine serve up down clean
+.PHONY: help setup install-data install-train lint fmt test spec smoke smoke-mirror ingest mirror train eval mine serve up down clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -35,8 +35,13 @@ smoke:            ## Offline end-to-end run of the Phase 1 pipeline on a fixture
 ingest:           ## Phase 1: build FORGE-HUMAN from configured sources
 	./.venv/bin/python -m forge.cli ingest --config configs/data/human.yaml
 
-mirror:           ## Phase 2: generate synthetic mirrors
-	./.venv/bin/python -m forge.cli mirror --config configs/generation/mirror.yaml
+smoke-mirror:     ## Offline end-to-end run of the Phase 2 mirror engine (fake generator)
+	./.venv/bin/python -m forge.cli mirror --config configs/generation/mirror.yaml \
+		--humans data/silver/smoke --out data/silver/smoke-mirrors --backend fake
+
+mirror:           ## Phase 2: generate synthetic mirrors (needs a GPU and pinned revisions)
+	./.venv/bin/python -m forge.cli mirror --config configs/generation/mirror.yaml \
+		--humans data/silver --out data/silver/mirrors --backend vllm
 
 train:            ## Phase 3: train a detector
 	./.venv/bin/python -m forge.cli train --config configs/training/baseline.yaml

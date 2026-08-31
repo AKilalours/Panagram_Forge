@@ -58,10 +58,27 @@ def ingest(
 
 
 @app.command()
-def mirror(config: str = typer.Option(..., "--config")) -> None:
+def mirror(
+    config: str = typer.Option(..., "--config"),
+    humans: str = typer.Option("data/silver", "--humans", help="human parquet root"),
+    out: str = typer.Option("data/silver/mirrors", "--out"),
+    backend: str = typer.Option("fake", "--backend", help="fake | vllm | transformers"),
+    limit: int = typer.Option(None, "--limit", help="cap human documents (smoke runs)"),
+) -> None:
     """Phase 2: generate synthetic mirrors."""
-    cfg.load(config)
-    _not_yet("2", "the mirror engine")
+    from forge.generation.run import run as _run
+
+    if backend == "fake":
+        typer.secho(
+            "backend=fake: output is a pipeline test, NOT training data.",
+            fg=typer.colors.YELLOW,
+        )
+    result = _run(config, humans_root=humans, out_root=out, backend=backend, limit=limit)
+    typer.secho(f"generated {len(result.docs)} mirrors", fg=typer.colors.GREEN)
+    for k, v in result.stats.items():
+        typer.echo(f"  {k}: {v}")
+    for split, n in sorted(result.partitions.items()):
+        typer.echo(f"  parquet split={split}: {n}")
 
 
 @app.command()

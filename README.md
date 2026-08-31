@@ -14,7 +14,7 @@
 |---|---|---|
 | 0 | Repo scaffold, Data Spec v1 frozen | done |
 | 1 | FORGE-HUMAN ingestion (FineWeb, FineWeb-Edu, public domain) | pipeline built and verified offline; real ingest not yet run |
-| 2 | Synthetic mirror engine, FORGE-MIRROR v0.1 | not started |
+| 2 | Synthetic mirror engine, FORGE-MIRROR v0.1 | engine built and verified offline; real generation not yet run |
 | 3 | Baseline detector (encoder + document head + token head) | not started |
 | 4 | Hard negative mining loop | not started |
 | 5 | External evaluation (RAID, MAGE, HC3) | not started |
@@ -41,8 +41,9 @@ make setup          # venv + editable install
 make test           # 55 tests
 make spec-check     # configs must match the frozen Data Spec v1
 
-# offline smoke run of the full Phase 1 pipeline, no network needed
-make smoke
+# offline smoke runs, no network or GPU needed
+make smoke          # Phase 1: ingestion
+make smoke-mirror   # Phase 2: mirror engine, fake generator
 
 # the real thing (needs network and the data extra)
 make install-data

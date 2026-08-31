@@ -1,0 +1,238 @@
+"""Phase 2 orchestration: human documents in, FORGE-MIRROR out.
+
+The single most important line in this file is the one that copies `source_group_id`
+and `split` from the human document onto its mirror. A mirror must never be assigned a
+split of its own. If it were, a human document could land in train while its mirror
+lands in test, and since the two share topic, length and structure, the model would
+score near-perfectly on content it had already memorized. Every metric would improve and
+nothing would raise an error.
+
+Second most important: `assert_no_held_out` runs before anything is written. A held-out
+family generating training data invalidates R3, the unseen-generator regime, which is
+the headline claim of the project.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from forge.common.config import REPO_ROOT, load
+from forge.common.schemas import GeneratorSpec, MirrorSpec, Split, SyntheticDocument
+from forge.dedup.minhash import MinHash
+from forge.generation.assignment import (
+    FamilySpec,
+    assert_no_held_out,
+    assign_decoding,
+    assign_family,
+    held_in_families,
+    parse_roster,
+)
+from forge.generation.attributes import HeuristicExtractor, VerbatimCopyError
+from forge.generation.generators.base import (
+    APIGenerator,
+    Decoding,
+    FakeGenerator,
+    TransformersGenerator,
+    VLLMGenerator,
+)
+from forge.generation.mirror import ValidationPolicy, ValidationStats, load_template, render_prompt, strip_wrapper, validate
+
+PARTITION_GLOB = "split=*/*.parquet"
+
+
+@dataclass
+class HumanRef:
+    """The minimum a mirror needs from its human source. Deliberately not the full
+    HumanDocument, so this runner can consume Parquet rows without a schema round-trip."""
+
+    doc_id: str
+    source_group_id: str
+    text: str
+    domain: str
+    split: Split
+
+
+@dataclass
+class MirrorResult:
+    docs: list[SyntheticDocument]
+    stats: dict = field(default_factory=dict)
+    partitions: dict[str, int] = field(default_factory=dict)
+
+
+def build_generator(spec: FamilySpec, backend: str):
+    if backend == "fake":
+        return FakeGenerator(family=spec.family, model_id=spec.model_id, revision="fake")
+    if spec.provider == "api":
+        return APIGenerator(spec.family, spec.model_id, endpoint="")
+    if backend == "vllm":
+        return VLLMGenerator(spec.family, spec.model_id, spec.revision)
+    if backend == "transformers":
+        return TransformersGenerator(spec.family, spec.model_id, spec.revision)
+    raise ValueError(f"unknown backend {backend!r}")
+
+
+def generate_mirrors(
+    humans: list[HumanRef],
+    generators_cfg: dict,
+    mirror_cfg: dict,
+    backend: str = "fake",
+) -> MirrorResult:
+    roster = parse_roster(generators_cfg)
+    families = held_in_families(roster)
+    grid = generators_cfg.get("decoding_grid", {})
+
+    policy_cfg = mirror_cfg.get("validation", {})
+    policy = ValidationPolicy(
+        length_ratio_min=policy_cfg.get("length_ratio_min", 0.6),
+        length_ratio_max=policy_cfg.get("length_ratio_max", 1.6),
+        reject_assistant_preamble=policy_cfg.get("reject_assistant_preamble", True),
+        max_minhash_jaccard_to_source=policy_cfg.get("max_minhash_jaccard_to_source", 0.5),
+        max_retries=policy_cfg.get("max_retries", 2),
+    )
+    template = load_template(REPO_ROOT / mirror_cfg["prompt_path"])
+    prompt_version = mirror_cfg.get("prompt_version", "mirror_v1")
+
+    extractor = HeuristicExtractor()
+    hasher = MinHash()
+    stats = ValidationStats()
+    extraction_failures = 0
+    cache: dict[str, object] = {}
+    used_families: set[str] = set()
+    out: list[SyntheticDocument] = []
+
+    for human in humans:
+        try:
+            attrs = extractor.extract(human.text)
+        except VerbatimCopyError:
+            extraction_failures += 1
+            continue
+
+        spec = assign_family(human.doc_id, families)
+        used_families.add(spec.family)
+        gen = cache.setdefault(spec.family, build_generator(spec, backend))
+        decoding: Decoding = assign_decoding(human.doc_id, grid)
+        prompt = render_prompt(attrs, template)
+
+        accepted = None
+        for attempt in range(policy.max_retries + 1):
+            # Vary the seed per attempt, otherwise a deterministic backend returns the
+            # identical rejected text and the retries are pure waste.
+            d = Decoding(decoding.temperature, decoding.top_p, decoding.max_new_tokens,
+                         (decoding.seed or 0) + attempt)
+            text = strip_wrapper(gen.generate([prompt + ("" if attempt == 0 else " ")], d)[0])
+            ok, reason = validate(text, human.text, attrs, policy, _hasher=hasher)
+            if ok:
+                accepted = (text, d)
+                break
+            stats.reject(reason)
+        if accepted is None:
+            continue
+
+        text, d = accepted
+        stats.accepted += 1
+        out.append(
+            SyntheticDocument(
+                sample_id=f"forge_{human.doc_id}",
+                source_human_id=human.doc_id,
+                # Inherited, never reassigned. See the module docstring.
+                source_group_id=human.source_group_id,
+                split=human.split,
+                text=text,
+                generator=GeneratorSpec(
+                    provider="api" if spec.provider == "api" else ("open_source" if backend != "fake" else "open_source"),
+                    family=spec.family,
+                    model_id=getattr(gen, "model_id", spec.model_id),
+                    revision=getattr(gen, "revision", spec.revision),
+                    temperature=d.temperature,
+                    top_p=d.top_p,
+                    max_new_tokens=d.max_new_tokens,
+                    seed=d.seed,
+                ),
+                mirror=MirrorSpec(
+                    prompt_version=prompt_version,
+                    target_tokens=attrs.target_tokens,
+                    topic_match=True,
+                    length_match=True,
+                    style_match=True,
+                    attributes={
+                        "genre": attrs.genre,
+                        "register": attrs.register,
+                        "structure": attrs.structure,
+                        "difficulty": attrs.difficulty,
+                        "extractor": extractor.name,
+                        "backend": backend,
+                    },
+                ),
+                domain=human.domain,
+                generated_at=datetime.now(timezone.utc),
+            )
+        )
+
+    # Hard checks before anything is written.
+    assert_no_held_out(roster, used_families)
+    _assert_split_inheritance(humans, out)
+
+    s = stats.as_dict()
+    s["extraction_failures"] = extraction_failures
+    s["families_used"] = sorted(used_families)
+    s["backend"] = backend
+    return MirrorResult(out, s)
+
+
+def _assert_split_inheritance(humans: list[HumanRef], mirrors: list[SyntheticDocument]) -> None:
+    by_id = {h.doc_id: h for h in humans}
+    for m in mirrors:
+        h = by_id[m.source_human_id]
+        if m.split is not h.split or m.source_group_id != h.source_group_id:
+            raise RuntimeError(
+                f"mirror {m.sample_id} did not inherit its human's split/group. "
+                "This is the leak the whole split design exists to prevent."
+            )
+
+
+def write_mirrors(docs: list[SyntheticDocument], root: str | Path) -> dict[str, int]:
+    root = Path(root)
+    written: dict[str, int] = {}
+    groups: dict[str, list[dict]] = {}
+    for d in docs:
+        row = d.model_dump(mode="json")
+        row["generator"] = row["generator"]  # struct column, pyarrow infers it
+        groups.setdefault(d.split.value, []).append(row)
+    for split, rows in groups.items():
+        out = root / f"split={split}"
+        out.mkdir(parents=True, exist_ok=True)
+        pq.write_table(pa.Table.from_pylist(rows), out / "part-000.parquet", compression="zstd")
+        written[split] = len(rows)
+    return written
+
+
+def read_humans(lake_root: str | Path, limit: int | None = None) -> list[HumanRef]:
+    import glob
+
+    from forge.ingestion.writer import PARTITION_GLOB as HUMAN_GLOB
+
+    files = sorted(glob.glob(str(Path(lake_root) / HUMAN_GLOB)))
+    if not files:
+        raise FileNotFoundError(f"no human parquet under {lake_root}. Run `forge ingest` first.")
+    refs: list[HumanRef] = []
+    for f in files:
+        t = pq.read_table(f, columns=["doc_id", "source_group_id", "text", "domain", "split"])
+        for row in t.to_pylist():
+            refs.append(HumanRef(row["doc_id"], row["source_group_id"], row["text"], row["domain"], Split(row["split"])))
+            if limit is not None and len(refs) >= limit:
+                return refs
+    return refs
+
+
+def run(config_path: str, humans_root: str | Path, out_root: str | Path, backend: str = "fake", limit: int | None = None) -> MirrorResult:
+    mirror_cfg = load(config_path)
+    generators_cfg = load("configs/generation/generators.yaml")
+    humans = read_humans(humans_root, limit=limit)
+    result = generate_mirrors(humans, generators_cfg, mirror_cfg, backend=backend)
+    result.partitions = write_mirrors(result.docs, out_root)
+    return result
