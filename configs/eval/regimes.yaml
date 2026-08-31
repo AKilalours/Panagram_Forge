@@ -1,0 +1,23 @@
+spec_version: data_spec_v1
+primary_metric: fpr
+fpr_budget: 0.001        # 0.1 percent. The operating threshold is derived from this.
+
+regimes:
+  R1_iid:              { description: held-out split, same distribution }
+  R2_unseen_domain:    { train_domains: [web, news, reviews, books], test_domains: [academic, poetry, recipes] }
+  R3_unseen_generator: { train_families: [llama, qwen, mistral, phi], test_families: [gemma, deepseek, api] }
+  R4_temporal:         { key: generator.released, note: split on model release date, never on generation date }
+  R5_adversarial:      { attacks_config: configs/eval/attacks.yaml }
+
+external:
+  - { id: raid, split: RAID-extra, contamination_check: required }
+  - { id: mage, split: test, contamination_check: required }
+  - { id: hc3,  split: all,       contamination_check: required }
+
+release_gate:
+  max_fpr: 0.001
+  max_fnr: 0.10
+  min_ood_auroc: 0.90
+  max_ece: 0.05
+  max_p95_latency_ms: 100
+  no_regression_on: [R1_iid, R3_unseen_generator, R5_adversarial]

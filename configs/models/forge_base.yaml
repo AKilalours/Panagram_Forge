@@ -1,0 +1,16 @@
+spec_version: data_spec_v1
+name: forge-base
+backbone: microsoft/deberta-v3-base   # ModernBERT is the Phase 3 alternative to benchmark against
+max_length: 512
+window:
+  size: 512
+  stride: 384          # 128 token overlap; the overlap value is a Phase 3 ablation
+heads:
+  document:
+    type: binary
+    classes: [human, ai]
+  token:
+    type: multiclass
+    classes: [human, ai_assisted, ai_generated]
+aggregation: mean_of_window_ai_fraction
+calibration: temperature_scaling

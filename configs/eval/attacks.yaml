@@ -1,0 +1,13 @@
+# Controlled transformations. Ours are controlled so we know exactly what changed;
+# RAID's 12 attacks are the independent external check.
+spec_version: data_spec_v1
+attacks:
+  - { id: paraphrase_llm,      severity: [light, heavy] }
+  - { id: sentence_reorder,    severity: [light, heavy] }
+  - { id: synonym_swap,        rate: [0.05, 0.15] }
+  - { id: whitespace_perturb,  rate: [0.02] }
+  - { id: homoglyph_substitute, rate: [0.01, 0.05] }
+  - { id: zero_width_insert,   rate: [0.01] }
+  - { id: grammar_edit,        severity: [light] }
+  - { id: humanizer_tool,      note: requires a real humanizer service; Phase 6 }
+  - { id: ai_assisted_edit,    note: human text partially rewritten by an LLM }

@@ -1,0 +1,12 @@
+# GPU training image. CUDA base so FSDP / DeepSpeed / custom kernels are available.
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 python3-pip git build-essential && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+RUN pip3 install -U pip && pip3 install -e ".[train,dist,mining]"
+COPY configs ./configs
+COPY kernels ./kernels
+CMD ["python3", "-m", "forge.cli", "train", "--config", "configs/training/baseline.yaml"]

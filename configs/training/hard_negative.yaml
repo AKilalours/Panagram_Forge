@@ -1,0 +1,25 @@
+# Stage 2. The heart of FORGE.
+spec_version: data_spec_v1
+experiment: { id: forge_exp_020, stage: hard_negative }
+model_config: configs/models/forge_base.yaml
+data: { dataset_version: v0.2, include: [human, ai_mirror, hard_negative] }
+mining:
+  source_model: forge-0.2
+  reserve_pool: data/reserve
+  scan_documents: 1000000
+  select: high_confidence_false_positives
+  min_confidence: 0.90
+  max_selected: 100000
+  clustering: { method: hdbscan, min_cluster_size: 25, embedder: sentence-transformers/all-mpnet-base-v2 }
+  # Sample across clusters rather than taking the global top-k, or the whole budget
+  # gets spent on one failure mode that happens to be the most confident.
+  sampling: proportional_to_cluster_size
+training:
+  batch_size: 32
+  grad_accum: 2
+  learning_rate: 1.0e-5
+  epochs: 2
+  seed: 42
+  precision: bf16
+distributed: { strategy: fsdp, sharding: full_shard }
+tracking: { backend: wandb, project: forge }

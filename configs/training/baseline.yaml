@@ -1,0 +1,17 @@
+# Stage 0. Human + randomly generated AI. This is the number every later stage must beat.
+spec_version: data_spec_v1
+experiment: { id: forge_exp_000, stage: baseline }
+model_config: configs/models/forge_base.yaml
+data: { dataset_version: v0.1, include: [human, ai_random] }
+training:
+  batch_size: 32
+  grad_accum: 2
+  learning_rate: 2.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  epochs: 3
+  seed: 42
+  precision: bf16
+  gradient_checkpointing: true
+distributed: { strategy: none }
+tracking: { backend: wandb, project: forge }

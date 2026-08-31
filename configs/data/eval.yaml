@@ -1,0 +1,24 @@
+# EVAL-ONLY sources. These may never appear in any training split.
+spec_version: data_spec_v1
+sources:
+  - id: hc3
+    hf_repo: Hello-SimpleAI/HC3
+    configs: [all]
+    license: CC-BY-SA-4.0
+    class: eval_only
+    note: answers are lists; one row expands to several documents
+
+  - id: raid
+    hf_repo: liamdugan/raid
+    license: MIT
+    class: eval_only
+    split_used: RAID-extra          # labeled and disjoint from RAID-train
+    excluded_domains: [code, czech, german]   # reported separately, not in headline
+    note: RAID-test labels are held out; leaderboard submission is a Phase 5 stretch goal
+
+  - id: mage
+    hf_repo: yaful/MAGE
+    license: Apache-2.0
+    class: eval_only
+    split_used: test
+    label_polarity_must_be_asserted: true     # see tests/unit/test_mage_polarity.py

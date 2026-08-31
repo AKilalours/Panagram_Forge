@@ -1,0 +1,56 @@
+# FORGE-HUMAN v0.1. Must match docs/data_spec_v1.md sections 1 and 2.
+spec_version: data_spec_v1
+dataset_version: v0.1
+
+sources:
+  - id: fw
+    hf_repo: HuggingFaceFW/fineweb
+    config: sample-10BT
+    license: ODC-By-1.0
+    redistributable: false
+    class: train_and_reserve
+    train_share: 0.45
+    filters: { language_score_min: 0.85 }
+
+  - id: fwe
+    hf_repo: HuggingFaceFW/fineweb-edu
+    config: sample-10BT
+    license: ODC-By-1.0
+    redistributable: false
+    class: train_and_reserve
+    train_share: 0.30
+    filters: { language_score_min: 0.85, int_score_min: 4 }
+
+  - id: gut
+    origin: https://www.gutenberg.org
+    license: public-domain-us
+    redistributable: true
+    class: train
+    train_share: 0.15
+
+  - id: gov
+    origin: https://www.govinfo.gov/bulkdata
+    license: public-domain-us-gov
+    redistributable: true
+    class: train
+    train_share: 0.10
+
+targets:
+  human_train: 400000
+  human_reserve: 5000000
+  human_eval: 50000
+
+cleaning:
+  min_chars: 200
+  min_tokens: 50
+  max_tokens: 20000
+  language: en
+  language_score_min: 0.85
+  minhash_permutations: 128
+  minhash_jaccard_threshold: 0.8
+  processing_version: clean_v1
+
+splits:
+  salt: forge-v1
+  ratios: { train: 0.80, val: 0.10, test: 0.10 }
+  group_key: source_group_id

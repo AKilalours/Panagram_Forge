@@ -1,0 +1,67 @@
+# Frozen generator roster for FORGE-MIRROR v0.1 (data_spec_v1 section 5).
+# held_out families must never appear in any training split. Deciding this before
+# seeing results is what makes the unseen-generator claim meaningful.
+spec_version: data_spec_v1
+
+decoding_grid:
+  temperature: [0.5, 0.7, 1.0]
+  top_p: [0.9, 0.95]
+  include_greedy: true
+  max_new_tokens: 1024
+
+families:
+  - family: llama
+    provider: open_source
+    model_id: meta-llama/Llama-3.1-8B-Instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-07
+    role: held_in
+    output_redistributable: false
+
+  - family: qwen
+    provider: open_source
+    model_id: Qwen/Qwen2.5-7B-Instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-09
+    role: held_in
+    output_redistributable: true
+
+  - family: mistral
+    provider: open_source
+    model_id: mistralai/Mistral-7B-Instruct-v0.3
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-05
+    role: held_in
+    output_redistributable: true
+
+  - family: phi
+    provider: open_source
+    model_id: microsoft/Phi-3.5-mini-instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-08
+    role: held_in
+    output_redistributable: true
+
+  - family: gemma
+    provider: open_source
+    model_id: google/gemma-2-9b-it
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-06
+    role: held_out
+    output_redistributable: false
+
+  - family: deepseek
+    provider: open_source
+    model_id: deepseek-ai/DeepSeek-V2-Lite-Chat
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-05
+    role: held_out
+    output_redistributable: true
+
+  - family: api
+    provider: api
+    model_id: TODO_DECIDE_SEE_SPEC_SECTION_10
+    revision: recorded_at_run_time
+    released: TODO
+    role: held_out
+    output_redistributable: false
