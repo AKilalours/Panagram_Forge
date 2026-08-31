@@ -450,3 +450,39 @@ still runs before the length filter. Both of those orderings are correctness
 properties, not performance choices.
 
 **Regression guard.** `tests/unit/test_pipeline.py::test_short_document_is_rejected_for_length_not_language`.
+
+### v1.2 (2026-08-31) - section 10 open questions 1 and 2 resolved
+
+**Question 1, token-level ground truth for `ai_assisted`. Resolved: build both sources.**
+
+Two constructions, recorded per record in a `construction` field so their contributions
+can be separated in analysis:
+
+- `splice` - a mixed document is built by interleaving paragraphs from a human document
+  with paragraphs from that same document's own mirror. Boundaries are exact and free,
+  it runs offline, and it can be built today. Its weakness is that the seams are
+  abruptly discontinuous, so a token head could learn "topic or style shift" rather than
+  "authorship shift".
+- `edit_diff` - a human document is partially rewritten by a model and the character
+  diff gives the `ai_assisted` spans. This matches how people actually use AI, which is
+  the case the product cares about. It costs GPU or API time per document.
+
+**Mandatory control.** A third construction, `splice_control`, interleaves paragraphs
+from two different HUMAN documents and labels every span `human`. Without it, the token
+head can reach high accuracy by detecting discontinuity alone, and nothing in the metrics
+would reveal that. The control set is not optional and its size tracks the splice set.
+
+Splices and edit-diffs inherit `source_group_id` and `split` from their human source,
+exactly like mirrors. A splice built from two different human documents inherits the
+group of the first and is only constructed from documents already in the same split.
+
+**Question 2, the held-out API family. Resolved: Anthropic `claude-sonnet-5`.**
+
+Pinned in `configs/generation/generators.yaml`. Note on reproducibility: for the Claude
+4.6 generation and later the dateless model id is itself a fixed snapshot, so it meets
+the pinned-revision requirement in section 5. Budget capped at 20,000 documents with a
+hard stop, and the family is used for R3 and R4 evaluation only. It never generates
+training data, because it is held out.
+
+Remaining open questions from section 10: item 3 (does smoothing help) and item 4
+(reserve pool size). Neither blocks a phase.

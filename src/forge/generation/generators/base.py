@@ -170,8 +170,14 @@ class FakeGenerator:
             # jitter deterministically off the prompt hash so lengths vary like a real model
             h = int(hashlib.sha256(p.encode()).hexdigest()[:8], 16)
             n = max(int(target * (0.85 + (h % 30) / 100.0)), 20)
-            words = (self._FILLER * (n // 50 + 2)).split()
-            out.append(" ".join(words[:n]))
+            words = (self._FILLER * (n // 50 + 2)).split()[:n]
+            # Emit paragraph breaks. A stand-in that returns one unbroken block cannot
+            # exercise anything downstream that depends on document structure, and
+            # splice construction would silently yield zero documents. Real generators
+            # paragraph their output, and one that does not is a bug worth surfacing.
+            per_para = max(n // (3 + (h % 3)), 25)
+            paras = [" ".join(words[i : i + per_para]) for i in range(0, len(words), per_para)]
+            out.append("\n\n".join(paras))
         return out
 
 

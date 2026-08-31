@@ -26,3 +26,37 @@
   directions, near-duplication of the source.
 - Runner inherits source_group_id and split from the human document, asserted before write.
 - Fixed: the frozen `[mirror_v1 ...]` header comment was being sent to the model.
+
+## Phase 3 - detector, token labels, calibration, evaluation lab
+
+Spec amended to v1.2, resolving the two blockers in section 10:
+- token ground truth: build BOTH constructions (`splice` and `edit_diff`), plus a
+  mandatory `splice_control` of human-to-human splices labelled entirely human. Without
+  the control, a token head can score well by detecting discontinuity alone and no
+  metric would reveal it.
+- held-out API family pinned to Anthropic `claude-sonnet-5`, budget-capped at 20,000
+  documents. For the Claude 4.6 generation and later the dateless id is itself a fixed
+  snapshot, so it meets the pinned-revision rule.
+
+Implemented and tested:
+- token_labels.py: splice, edit-diff and control construction; spans validated to tile
+  each document exactly, with no gaps or overlaps
+- alignment.py: character spans to per-token labels, majority-overlap rule, special
+  tokens set to the ignore index, round-trip back to spans
+- dataset.py: each window labelled by its OWN content rather than inheriting the
+  document label
+- calibration.py: temperature scaling by golden-section search on NLL, numpy only
+- lab.py: one threshold fitted on validation and reused across every regime, per-regime
+  FPR measurability check, contamination reporting, headline pulled from named regimes
+- encoder.py: FORGE-Base with shared encoder, document head and token head
+
+Bugs found and fixed:
+- character-level diffing matched coincidental fragments ("n ", "a", "ing ") between
+  unrelated texts, scoring a total rewrite at 0.63 instead of ~1.0 and littering AI
+  documents with one-character spans labelled human. Diffing is now word-level with a
+  minimum unchanged-run floor.
+- the fake generator emitted one unbroken block, so splice construction silently
+  produced zero documents. It now paragraphs its output, and `why_splice_failed`
+  reports the reason when a splice cannot be built.
+
+Not done, and not claimed: the training fit loop. It cannot be verified without a GPU.

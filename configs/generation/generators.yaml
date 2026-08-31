@@ -58,10 +58,18 @@ families:
     role: held_out
     output_redistributable: true
 
+  # Held-out frontier family. Resolved 2026-08-31, see data_spec_v1 section 11 (v1.2).
+  # For the Claude 4.6 generation and later the dateless id IS the pinned snapshot:
+  # Anthropic does not update the weights behind an existing model id. So `claude-sonnet-5`
+  # satisfies the pinned-revision rule that `main` on a HuggingFace repo does not.
+  # The served model string is still recorded per request as a belt-and-braces check.
   - family: api
     provider: api
-    model_id: TODO_DECIDE_SEE_SPEC_SECTION_10
-    revision: recorded_at_run_time
-    released: TODO
+    model_id: claude-sonnet-5
+    revision: dateless_id_is_pinned_snapshot
+    released: 2026-01
     role: held_out
     output_redistributable: false
+    budget:
+      max_documents: 20000        # R3/R4 evaluation only, not the 400k training side
+      hard_stop_on_budget: true
