@@ -297,3 +297,27 @@ def test_duplicate_cluster_labels_are_flagged_as_a_split_mode():
     recs, texts = _mixed_failures()
     atlas = build_atlas(recs, texts, k=6)   # more clusters than true modes
     assert any("split across several clusters" in w for w in atlas.quality_warnings())
+
+
+def test_an_explicit_k_always_means_kmeans_regardless_of_environment():
+    """Regression guard for a bug that only appeared on the GPU pod.
+
+    cluster(method="auto") preferred HDBSCAN when it was importable, and silently ignored
+    an explicit `k`. On a laptop without the mining extra, k-means ran; on the pod, where
+    the extra provides HDBSCAN, the same call with the same k ran a different algorithm.
+    Two tests passed in one environment and failed in the other, from identical code.
+
+    `k` is a k-means parameter. Supplying one is a request for k-means.
+    """
+    recs, texts = _mixed_failures(per_mode=20)
+    atlas = build_atlas(recs, texts, k=3)
+    assert atlas.clustering.method == "kmeans"
+    assert atlas.clustering.n_clusters == 3
+
+
+def test_without_k_the_method_is_whatever_is_available_and_is_recorded():
+    """A report must never present k-means output as if it were density-based."""
+    recs, texts = _mixed_failures(per_mode=20)
+    atlas = build_atlas(recs, texts, min_cluster_size=10)
+    assert atlas.clustering.method in ("kmeans", "hdbscan")
+    assert atlas.as_dict()["clustering"]["method"] == atlas.clustering.method

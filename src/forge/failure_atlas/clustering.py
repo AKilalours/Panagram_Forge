@@ -96,7 +96,20 @@ def cluster(
     k: int | None = None,
     seed: int = 42,
 ) -> ClusterResult:
-    """method: 'auto' prefers hdbscan and falls back to kmeans, recording which ran."""
+    """Choose a clustering method, recording which one actually ran.
+
+    method="auto" prefers HDBSCAN and falls back to k-means, EXCEPT when an explicit `k`
+    is supplied. `k` is a k-means parameter and HDBSCAN has no use for it, so passing one
+    is an explicit request for k-means; silently ignoring it would give the caller a
+    different algorithm than the arguments describe.
+
+    That is not hypothetical. Two tests passed on a laptop without HDBSCAN installed and
+    failed on a GPU pod where the `mining` extra provides it: the same call with the same
+    `k` ran k-means in one environment and HDBSCAN in the other. Identical code, different
+    clusters, environment-dependent results.
+    """
+    if k is not None:
+        return kmeans(x, k, seed=seed)
     if method in ("auto", "hdbscan"):
         try:
             return hdbscan_cluster(x, min_cluster_size)
