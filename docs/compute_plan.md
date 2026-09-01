@@ -131,3 +131,88 @@ have bugs, and the cheapest place to find them is in a run that costs $29.
 
 Step 4 is the one that matters. It is the first point at which this project has a
 measured result rather than an implementation.
+
+---
+
+## 6. The under-$20 configuration
+
+### Correction to section 2
+
+Section 2 says Kaggle is disqualified. That is true **at plan scale** (400k mirrors, 7-8B
+generators, a 5M reserve pool). It is not true at reduced scale, and stating it flatly was
+too strong. At the configuration below most phases fit inside Kaggle's free quota, and the
+only thing that genuinely requires paying is the 4-GPU distributed benchmark.
+
+### The four levers, in order of impact
+
+**1. Smaller generator families.** Swap 7-8B for 1.5-4B: Qwen2.5-3B-Instruct,
+Llama-3.2-3B-Instruct, Phi-3.5-mini-3.8B, Gemma-2-2B. Throughput roughly triples.
+
+These are still real, distinct generator families, which is what the research question
+needs. **Recorded limitation:** smaller models produce more detectable text, so absolute
+FPR and FNR will look better than a 7B-to-70B setup would produce. The comparative result
+between arms is unaffected; the absolute numbers must not be quoted as if they came from
+frontier-scale generators.
+
+**2. Shorter documents.** Filter the human corpus to 150-400 words. Output tokens drop
+roughly 2x, and at ~400 tokens a document is exactly one 512-token window.
+
+This is a defensible design choice, not a shortcut: FORGE v1 becomes a single-window
+detector, with multi-window aggregation evaluated separately on a small long-document set.
+**Recorded limitation:** the windowing and aggregation path is then under-tested, and the
+corpus is biased toward short-form web text.
+
+**3. Fewer mirrors.** 60k instead of 400k. 120k training examples is ample for a
+DeBERTa-base-sized encoder, and the claim is comparative at equal budget per arm.
+
+**4. Smaller reserve pool.** 500k instead of 5M. **Recorded limitation:** fewer distinct
+failure clusters for mining to find, so the Failure Atlas will be thinner and open
+question 4 (reserve pool sizing) stays open.
+
+### Cost at that configuration
+
+| Phase | Work | Pod | Hours | Cost |
+|---|---|---|---:|---:|
+| 2 | 60k mirrors, 18M output tokens, 3B models | 1x RTX 4090 | 1.5 | $1.11 |
+| 2 | held-out family, 10k docs for R3 only | 1x RTX 4090 | 0.4 | $0.30 |
+| 3 | 4-arm ablation, 360k examples each | 1x A40 | 3.6 | $1.60 |
+| 4 | mining, 500k docs x 2 rounds | 1x A40 | 0.2 | $0.08 |
+| 5 | RAID-extra subsample, MAGE, HC3 | 1x A40 | 0.1 | $0.03 |
+| 6 | paraphrase attacks, 20k docs | 1x RTX 4090 | 0.4 | $0.31 |
+| 7 | FSDP vs DeepSpeed, 1/2/4 GPU | 4x A40 | 3.5 | $1.54 |
+| | **Compute** | | | **$4.97** |
+| | 3x buffer for failed runs | | | $14.91 |
+| | 50 GB network volume, one month | | | $3.50 |
+| | **All-in** | | | **~$18** |
+
+### Pushing it toward $5
+
+Everything except Phase 7 can run on Kaggle's free 2x T4 at this scale. Phase 2 becomes
+roughly 2.5 hours of wall time across two GPUs, well inside a 12-hour session and the
+30-hour weekly quota.
+
+**One gotcha that will cost you a week if you hit it blind.** T4 is Turing and has no
+bf16, so Kaggle training runs in fp16, and **DeBERTa-v3 in fp16 is known to produce NaN
+losses** because of overflow in its disentangled attention. Three options:
+
+- train fp32 on T4, roughly half speed, still feasible at this scale
+- use a fp16-safe backbone such as RoBERTa-base for the Kaggle runs
+- spend $1.60 on an A40 and train in bf16 as designed
+
+The third is the right answer. Spending $2 to avoid a week of debugging NaN losses is not
+a close call.
+
+**Floor: about $2.** One hour on 4x A40 to get the 4-GPU point in the Phase 7 benchmark,
+with everything else on Kaggle and the MacBook. Kaggle's 2x T4 can produce a genuine 1-to-2
+GPU scaling-efficiency measurement on its own, so even that hour is optional. What you
+cannot honestly say without it is "trained across 4 GPUs".
+
+### What this configuration does NOT cost you
+
+- The comparative claim. A/B/C/D at equal data budget per arm is fully intact.
+- Every leakage, contamination and measurement-validity guard.
+- The multi-GPU distributed story, provided the 4x A40 hour is bought.
+- The Failure Atlas loop, at reduced resolution.
+
+Scale up later if the quarter-scale result justifies it. The final table can be regenerated
+at plan scale for about $74 once the loop is known to work.
