@@ -135,6 +135,36 @@ def mirror(
         typer.echo(f"  parquet split={split}: {n}")
 
 
+@app.command("generate-random")
+def generate_random_cmd(
+    n: int = typer.Option(..., "--n", help="must EQUAL the mirror count; equal budget per arm"),
+    humans: str = typer.Option("data/silver", "--humans"),
+    generators: str = typer.Option("configs/generation/generators_minimal.yaml", "--generators"),
+    out: str = typer.Option("data/silver/random", "--out"),
+    backend: str = typer.Option("fake", "--backend", help="fake | vllm | transformers"),
+) -> None:
+    """Arm A: conventional random synthetic data. The control the project measures against.
+
+    Unmatched AI text from a fixed topic list. Same generators, same decoding grid and the
+    same document count as the mirror arm, so any difference between arms is attributable
+    to matching rather than to budget.
+    """
+    from forge.generation.random_synthetic import generate_random, length_pool_from_corpus
+    from forge.generation.run import write_mirrors
+
+    if backend == "fake":
+        typer.secho("backend=fake: output is a pipeline test, NOT training data.",
+                    fg=typer.colors.YELLOW)
+    pool = length_pool_from_corpus(humans)
+    res = generate_random(n, pool, cfg.load(generators), backend=backend)
+    parts = write_mirrors(res.docs, out)
+    typer.secho(f"generated {len(res.docs)} random-synthetic documents", fg=typer.colors.GREEN)
+    for k, v in res.stats.items():
+        typer.echo(f"  {k}: {v}")
+    for split, n_ in sorted(parts.items()):
+        typer.echo(f"  parquet split={split}: {n_}")
+
+
 @app.command()
 def train(
     config: str = typer.Option("configs/minimal/training_mirror.yaml", "--config"),
