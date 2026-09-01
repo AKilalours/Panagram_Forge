@@ -181,3 +181,36 @@ def test_written_corpus_is_validated_against_the_config_not_the_plumbing():
     )
     with pytest.raises(RuntimeError, match="did not reach the cleaner"):
         assert_corpus_matches_policy([doc], policy)
+
+
+def test_length_is_rechecked_after_pii_redaction():
+    """Regression guard for a bug the corpus post-condition caught on a real run.
+
+    Redaction can shrink the word count: "(555) 123-4567" is two whitespace tokens that
+    collapse to one "[PHONE]". A document admitted at exactly the length floor is then
+    WRITTEN below it, so the stored token_count disagrees with the gate that let it in.
+    On the first 60,000-document FineWeb run this produced exactly one violation, at 147
+    tokens against a floor of 150.
+    """
+    from forge.cleaning.filters import LengthPolicy
+    from forge.cleaning.pipeline import CleaningPolicy
+
+    policy = CleaningPolicy(length=LengthPolicy(min_chars=10, min_tokens=12, max_tokens=10_000))
+
+    # 12 words exactly, two of which are a single phone number that redacts to one token
+    text = "The office can be reached on (555) 123-4567 during working hours today"
+    assert len(text.split()) == 12
+
+    docs, stats = run([rec("p", text)], policy)
+    assert docs == [], "a document that falls below the floor after redaction must be rejected"
+    assert "too_short_tokens_after_redaction" in stats.rejected
+
+
+def test_a_document_comfortably_inside_the_range_survives_redaction():
+    from forge.cleaning.filters import LengthPolicy
+    from forge.cleaning.pipeline import CleaningPolicy
+
+    policy = CleaningPolicy(length=LengthPolicy(min_chars=10, min_tokens=12, max_tokens=10_000))
+    docs, _ = run([rec("q", PROSE + " Reach us on (555) 123-4567 for details.")], policy)
+    assert len(docs) == 1
+    assert docs[0].token_count == len(docs[0].text.split())

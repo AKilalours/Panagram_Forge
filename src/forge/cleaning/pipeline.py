@@ -48,6 +48,7 @@ STAGES = [
     "language_id",
     "quality_scoring",
     "pii_filter",
+    "length_recheck_after_redaction",
     "exact_dedup",
     "near_duplicate_dedup",
     "domain_classification",
@@ -140,6 +141,19 @@ class Cleaner:
 
         # 7. PII redaction (before hashing, so the hash matches what we store)
         text, pii_flags = pii.redact(text)
+
+        # Re-check length AFTER redaction. Redaction can shrink the word count: a phone
+        # number written "(555) 123-4567" is two whitespace tokens that collapse to one
+        # "[PHONE]". A document sitting at exactly the floor therefore lands below it,
+        # and the stored token_count (computed post-redaction) then disagrees with the
+        # gate that admitted it. Found by assert_corpus_matches_policy on a real run:
+        # 1 of 60,000 documents was written at 147 tokens against a floor of 150.
+        #
+        # The cheap pre-filter stays where it is so expensive stages are skipped early;
+        # this is the final check that makes the gate and the stored value agree.
+        if reasons := check_length(text, self.policy.length):
+            self._reject(f"{reasons[0]}_after_redaction")
+            return None
 
         doc_id = f"{rec.source_id}_{rec.source_record_id}"
         sha = content_sha256(text)
