@@ -67,3 +67,49 @@ def test_luhn_stops_the_credit_card_regex_firing_on_any_long_number():
     assert "CREDIT_CARD" not in pii.detect("order reference 1234567812345678 shipped")
     # a valid Luhn number is caught
     assert "CREDIT_CARD" in pii.detect("card 4539578763621486 on file")
+
+
+# ------------------------------------------------------- language identification
+
+def test_language_detection_never_raises_regardless_of_environment():
+    """Regression guard for a bug that only appeared on the GPU pod.
+
+    detect() used to raise NotImplementedError whenever the fastText LIBRARY was
+    importable, which is a proxy for "a model is usable", not the thing itself. On a
+    laptop where the import failed the heuristic ran and tests passed; on the pod, where
+    the data extra provides fasttext, the same call raised. Identical code, opposite
+    behaviour, and `forge ingest` would have crashed on the first document from any
+    source without an upstream score.
+    """
+    from forge.cleaning import langid
+
+    langid.reset_model_cache()
+    for text in [PROSE, "", "   ", "a", "Der Bericht beschreibt die Entwicklung."]:
+        r = langid.detect(text)
+        assert isinstance(r.language, str) and 0.0 <= r.score <= 1.0
+
+
+def test_upstream_score_is_preferred_over_recomputing():
+    """FineWeb already carries a fastText language score. Recomputing it would be work
+    to reproduce a field the dataset hands us."""
+    from forge.cleaning import langid
+
+    r = langid.detect("anything at all", upstream=("en", 0.97))
+    assert r.detector == "upstream" and r.score == 0.97
+
+
+def test_a_missing_model_path_falls_back_rather_than_failing(monkeypatch):
+    from forge.cleaning import langid
+
+    monkeypatch.setenv(langid.MODEL_PATH_ENV, "/nonexistent/lid.176.bin")
+    langid.reset_model_cache()
+    r = langid.detect(PROSE)
+    assert r.detector == "heuristic" and r.language == "en"
+    langid.reset_model_cache()
+
+
+def test_english_prose_is_detected_by_the_heuristic():
+    from forge.cleaning import langid
+
+    langid.reset_model_cache()
+    assert langid.detect(PROSE).language == "en"
