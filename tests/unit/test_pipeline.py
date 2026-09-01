@@ -128,3 +128,56 @@ def test_publishable_artifact_is_not_inside_the_partition_tree(tmp_path):
     schemas = {tuple(pq.read_schema(f).names) for f in files}
     assert len(schemas) == 1, "every partition file must share one schema"
     assert "text" in next(iter(schemas))
+
+
+def test_cleaning_config_actually_reaches_the_cleaner():
+    """Regression guard for a bug found on the first real ingestion run.
+
+    The runner contained the line `policy.length.__dict__`, a no-op expression that reads
+    an attribute and discards it. Every value under `cleaning:` was silently ignored and
+    the LengthPolicy DEFAULTS ran instead: 200 / 50 / 20000 rather than the configured
+    800 / 150 / 400.
+
+    Nothing errored. The rejection counts looked healthy and the quota was met. Only the
+    token-length distribution of the written corpus revealed it, and by then 60,000
+    documents had been ingested.
+    """
+    from forge.common.config import load
+    from forge.ingestion.run import policy_from_config
+
+    p = policy_from_config(load("configs/data/human_minimal.yaml"))
+    assert p.length.min_chars == 800
+    assert p.length.min_tokens == 150
+    assert p.length.max_tokens == 400
+
+
+def test_defaults_survive_when_the_config_is_silent():
+    from forge.cleaning.filters import LengthPolicy
+    from forge.ingestion.run import policy_from_config
+
+    p = policy_from_config({"cleaning": {}})
+    assert p.length.max_tokens == LengthPolicy().max_tokens
+
+
+def test_written_corpus_is_validated_against_the_config_not_the_plumbing():
+    """Rejection accounting could not catch the bug: the counts were accurate for the
+    policy that actually ran. What was missing was a check that the policy which ran was
+    the policy that was requested."""
+    from datetime import datetime, timezone
+
+    import pytest
+
+    from forge.common.config import load
+    from forge.common.schemas import HumanDocument, Quality, Split
+    from forge.ingestion.run import assert_corpus_matches_policy, policy_from_config
+
+    policy = policy_from_config(load("configs/data/human_minimal.yaml"))
+    doc = HumanDocument(
+        doc_id="x", source_group_id="grp_x", text="t" * 10, source="fw",
+        license="ODC-By-1.0", domain="web", text_register="informational",
+        language_score=0.99, acquired_at=datetime.now(timezone.utc),
+        processing_version="clean_v1", content_sha256="a" * 64, token_count=19639,
+        quality=Quality(), split=Split.TRAIN,
+    )
+    with pytest.raises(RuntimeError, match="did not reach the cleaner"):
+        assert_corpus_matches_policy([doc], policy)

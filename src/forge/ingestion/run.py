@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+from forge.cleaning.filters import LengthPolicy, QualityPolicy
 from forge.cleaning.pipeline import Cleaner, CleaningPolicy
 from forge.common.config import REPO_ROOT, load
 from forge.common.schemas import HumanDocument, Split
@@ -52,6 +53,68 @@ def _build_source(entry: dict, local_root: Path | None):
     raise ValueError(f"unknown source id {sid!r}")
 
 
+def policy_from_config(cfg: dict) -> CleaningPolicy:
+    """Build the cleaning policy FROM the config.
+
+    This function exists because of a real bug. The runner previously contained the line
+
+        policy.length.__dict__   # frozen dataclasses; defaults come from the spec
+
+    which is a no-op expression statement. It reads an attribute and discards it. Every
+    value under `cleaning:` in the config was silently ignored and the LengthPolicy
+    defaults were used instead: min_chars 200, min_tokens 50, max_tokens 20000, rather
+    than the configured 800 / 150 / 400.
+
+    The consequence was invisible in the run output. Rejection counts looked healthy, the
+    quota was met, and nothing errored. Only the token-count distribution of the WRITTEN
+    corpus revealed it: 65 percent of documents fell outside the configured range and one
+    document was 19,639 tokens, which is 51 training windows all carrying one label.
+
+    LengthPolicy and QualityPolicy are frozen, so they must be constructed, not mutated.
+    That is exactly what the original line failed to do.
+    """
+    c = cfg.get("cleaning", {})
+    base_len, base_q = LengthPolicy(), QualityPolicy()
+    return CleaningPolicy(
+        length=LengthPolicy(
+            min_chars=c.get("min_chars", base_len.min_chars),
+            min_tokens=c.get("min_tokens", base_len.min_tokens),
+            max_tokens=c.get("max_tokens", base_len.max_tokens),
+        ),
+        quality=QualityPolicy(
+            max_symbol_ratio=c.get("max_symbol_ratio", base_q.max_symbol_ratio),
+            max_repeated_line_ratio=c.get("max_repeated_line_ratio", base_q.max_repeated_line_ratio),
+            min_mean_word_length=c.get("min_mean_word_length", base_q.min_mean_word_length),
+            max_mean_word_length=c.get("max_mean_word_length", base_q.max_mean_word_length),
+            min_unique_word_ratio=c.get("min_unique_word_ratio", base_q.min_unique_word_ratio),
+        ),
+        language=c.get("language", "en"),
+        language_score_min=c.get("language_score_min", 0.85),
+    )
+
+
+def assert_corpus_matches_policy(docs: list[HumanDocument], policy: CleaningPolicy) -> None:
+    """Post-condition: every written document must satisfy the filter that was asked for.
+
+    Rejection accounting alone could not catch the bug above, because the counts were
+    accurate for the policy that actually ran. What was missing was a check that the
+    policy which ran was the policy that was requested. This closes that: it validates the
+    OUTPUT against the CONFIG rather than trusting the plumbing between them.
+    """
+    bad = [
+        d for d in docs
+        if not (policy.length.min_tokens <= d.token_count <= policy.length.max_tokens)
+    ]
+    if bad:
+        lo = min(d.token_count for d in bad)
+        hi = max(d.token_count for d in bad)
+        raise RuntimeError(
+            f"{len(bad)} of {len(docs)} written documents violate the configured length "
+            f"policy ({policy.length.min_tokens}-{policy.length.max_tokens} tokens); "
+            f"observed {lo} to {hi}. The configured filter did not reach the cleaner."
+        )
+
+
 def _quota(entry: dict, total: int | None) -> int | None:
     """Per-source document budget from its train_share."""
     if total is None:
@@ -84,10 +147,7 @@ def ingest(
     out_root = Path(out_root) if out_root else REPO_ROOT / "data" / "silver"
     total = total if total is not None else cfg.get("targets", {}).get("human_train")
 
-    cleaning = cfg.get("cleaning", {})
-    policy = CleaningPolicy()
-    policy.language_score_min = cleaning.get("language_score_min", policy.language_score_min)
-    policy.length.__dict__  # frozen dataclasses; defaults come from the spec
+    policy = policy_from_config(cfg)
 
     # One cleaner for the whole run: dedup must be global across sources.
     cleaner = Cleaner(policy)
@@ -143,8 +203,9 @@ def ingest(
                 ),
             }
 
-    # Hard invariant. If this raises, nothing downstream is trustworthy.
+    # Hard invariants. If either raises, nothing downstream is trustworthy.
     check_no_group_leakage([(d.source_group_id, d.split) for d in all_docs])
+    assert_corpus_matches_policy(all_docs + reserve_docs, policy)
 
     version = cfg.get("dataset_version", "v0.1")
     partitions = write_parquet(all_docs, out_root)
