@@ -44,17 +44,30 @@ def ingest(
     config: str = typer.Option(..., "--config"),
     out: str = typer.Option("data/silver", "--out", help="output root for Parquet"),
     total: int = typer.Option(None, "--total", help="override the document target (smoke runs)"),
+    with_reserve: bool = typer.Option(False, "--with-reserve", help="also build the mining reserve pool"),
+    reserve_out: str = typer.Option("data/reserve", "--reserve-out"),
+    read_multiplier: int = typer.Option(20, "--read-multiplier",
+                                        help="documents to stream per document kept"),
 ) -> None:
     """Phase 1: build FORGE-HUMAN from the configured sources."""
     from forge.ingestion.run import ingest as _ingest
 
-    result = _ingest(config, out_root=out, total=total)
+    result = _ingest(config, out_root=out, total=total, with_reserve=with_reserve,
+                     reserve_root=reserve_out, read_multiplier=read_multiplier)
     typer.secho(f"kept {len(result.docs)} documents", fg=typer.colors.GREEN)
     for sid, st in result.stats_by_source.items():
         typer.echo(f"  {sid}: seen={st['seen']} kept={st['kept']} rejected={st['rejected']}")
     for part, n in sorted(result.partitions.items()):
         typer.echo(f"  parquet {part}: {n}")
+    if result.reserve_docs:
+        typer.echo(f"  reserve pool: {result.reserve_docs} documents -> {result.reserve_partitions}")
     typer.echo(f"  manifest: {result.manifest_path}")
+    for sid, sf in result.shortfalls.items():
+        typer.secho(
+            f"  SHORTFALL {sid}: wanted {sf['wanted']}, got {sf['got']} "
+            f"(keep rate {sf['keep_rate']:.1%})", fg=typer.colors.YELLOW,
+        )
+        typer.echo(f"     {sf['hint']}")
 
 
 @app.command("pin-revisions")

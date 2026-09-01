@@ -36,6 +36,28 @@ pip install -e ".[data]"
 make min-ingest
 ```
 
+Two things to know about this step.
+
+**The reserve pool is separate and must be built in the SAME pass.** `make min-ingest`
+builds only the training pool, which is all the baseline needs. When you get to Phase 4
+mining, use `--with-reserve`:
+
+```bash
+forge ingest --config configs/data/human_minimal.yaml --out data/silver \
+  --with-reserve --reserve-out data/reserve
+```
+
+One pass, one deduplicator, so the two pools are guaranteed disjoint. Running two
+separate commands over the same stream produces two OVERLAPPING pools, and a reserve
+document that is also a training document has been memorised, so it will never surface as
+a false positive and the mining pass finds nothing.
+
+**Watch for a SHORTFALL warning.** The minimal config caps documents at 400 tokens, and
+most FineWeb documents are longer than that, so the majority are rejected as
+`too_long_tokens`. If the stream runs out before the quota is met the run now says so
+instead of quietly under-delivering. The fix is `--read-multiplier 50`, or relaxing
+`max_tokens` in the config and accepting multi-window documents.
+
 Produces 60k train + 10k eval + 500k reserve, short documents only, with `MANIFEST.json`.
 Expect a **low keep rate**. Web text is dirty. Watch the rejection breakdown:
 
