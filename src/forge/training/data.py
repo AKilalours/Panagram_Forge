@@ -42,13 +42,35 @@ def _single_span(text: str, label: int) -> list[tuple[int, int, str]]:
     return [(0, len(text), tl)]
 
 
+ARM_PROMPT_VERSION = {"random": "random_v1", "mirror": "mirror_v1", "hard_negative": "mirror_v1"}
+
+
+class ArmMismatch(RuntimeError):
+    pass
+
+
 def load_examples(
     human_root: str | Path | None = None,
-    mirror_root: str | Path | None = None,
+    ai_root: str | Path | None = None,
     mixed_root: str | Path | None = None,
     splits: tuple[str, ...] = ("train", "val", "test"),
     limit: int | None = None,
+    expect_arm: str | None = None,
+    mirror_root: str | Path | None = None,   # deprecated alias
 ) -> list[RawExample]:
+    """Load one arm's training data.
+
+    `expect_arm` exists because of a bug that would have produced a FALSE NEGATIVE at
+    real cost. All three arm configs pointed their AI source at the same directory, and
+    `data.include` was decorative, so Arm A and Arm B would have trained on identical
+    data, produced identical numbers, and supported the conclusion "matched mirrors make
+    no difference".
+
+    Nothing would have errored. Two successful runs, two plausible rows in the results
+    table, one false finding. So the arm is now declared in the config and verified
+    against the `prompt_version` recorded on every generated document.
+    """
+    ai_root = ai_root or mirror_root
     out: list[RawExample] = []
 
     if human_root:
@@ -65,19 +87,32 @@ def load_examples(
                 if limit and len(out) >= limit:
                     return out
 
-    if mirror_root:
-        for f in sorted(glob.glob(str(Path(mirror_root) / "split=*/*.parquet"))):
+    if ai_root:
+        seen_versions: set[str] = set()
+        for f in sorted(glob.glob(str(Path(ai_root) / "split=*/*.parquet"))):
             for r in pq.read_table(
-                f, columns=["sample_id", "source_group_id", "text", "split", "domain", "generator"]
+                f, columns=["sample_id", "source_group_id", "text", "split", "domain",
+                            "generator", "mirror"]
             ).to_pylist():
                 if r["split"] not in splits:
                     continue
                 g = r.get("generator") or {}
+                seen_versions.add(((r.get("mirror") or {}).get("prompt_version")) or "unknown")
                 out.append(RawExample(r["sample_id"], r["source_group_id"], r["split"],
                                       r["text"], 1, _single_span(r["text"], 1), r["domain"],
                                       g.get("family", "unknown"), str(g.get("released", ""))))
                 if limit and len(out) >= limit:
                     return out
+
+        if expect_arm and seen_versions:
+            want = ARM_PROMPT_VERSION.get(expect_arm)
+            if want and not seen_versions <= {want}:
+                raise ArmMismatch(
+                    f"config declares arm '{expect_arm}' (expects prompt_version "
+                    f"{want!r}) but {ai_root} contains {sorted(seen_versions)}. The arm "
+                    "is training on the wrong data. Two arms reading the same directory "
+                    "produce identical results and a false finding."
+                )
 
     if mixed_root:
         for f in sorted(glob.glob(str(Path(mixed_root) / "split=*/*.parquet"))):

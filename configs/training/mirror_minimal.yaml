@@ -7,13 +7,13 @@ fpr_budget: 0.001
 
 paths:
   human: data/silver
-  mirror: data/silver/mirrors
+  ai: data/silver/mirrors          # THIS ARM'S AI SOURCE. Each arm must differ.
   mixed: data/silver/mixed
   out: outputs
 
 data:
   dataset_version: v0.1-min
-  include: [human, ai_mirror]
+  arm: mirror              # verified against prompt_version at load
 
 training:
   batch_size: 32

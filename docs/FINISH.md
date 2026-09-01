@@ -73,6 +73,11 @@ matching rather than about volume.
 make min-smoke
 ```
 
+The trainer now refuses to start unless the config declares `data.arm`, and it verifies
+the loaded AI documents actually belong to that arm by checking their recorded
+`prompt_version`. If Arm A is pointed at the mirror directory it fails loudly instead of
+training on the wrong data and reporting a plausible number.
+
 ## Step 5 — Train both arms. ~2 hours, ~$1.60.
 
 ```bash

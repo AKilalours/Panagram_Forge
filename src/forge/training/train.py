@@ -144,7 +144,29 @@ def evaluate_split(model, loader, device, fpr_budget: float, calibrate: bool = T
     )
 
 
+def validate_config(cfg: dict) -> str:
+    """Config checks that must not require torch.
+
+    Config errors should surface in a second on a laptop, not after a GPU stack has
+    loaded on a paid pod.
+    """
+    arm = cfg.get("data", {}).get("arm")
+    if arm is None:
+        raise RuntimeError(
+            "training config must declare data.arm (random | mirror | hard_negative). "
+            "Without it the loader cannot verify the arm is reading its own data, and "
+            "two arms pointed at the same directory produce a false finding silently."
+        )
+    paths = cfg.get("paths", {})
+    if not (paths.get("ai") or paths.get("mirror")):
+        raise RuntimeError("training config must declare paths.ai, this arm's AI source")
+    return arm
+
+
 def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> dict:
+    cfg_early = load(config) if isinstance(config, str) else config
+    validate_config(cfg_early)
+
     import torch
     from torch.utils.data import DataLoader
     from transformers import AutoTokenizer, get_linear_schedule_with_warmup
@@ -169,9 +191,10 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
 
     tok = AutoTokenizer.from_pretrained(mcfg["backbone"])
     limit = 200 if smoke else dcfg.get("limit")
+    arm = validate_config(cfg)
     examples = load_examples(
-        human_root=paths.get("human"), mirror_root=paths.get("mirror"),
-        mixed_root=paths.get("mixed"), limit=limit,
+        human_root=paths.get("human"), ai_root=paths.get("ai") or paths.get("mirror"),
+        mixed_root=paths.get("mixed"), limit=limit, expect_arm=arm,
     )
     if not examples:
         raise RuntimeError(
@@ -319,6 +342,8 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
         "backbone": mcfg["backbone"],
         "device": device,
         "precision": precision,
+        "arm": arm,
+        "ai_source": paths.get("ai") or paths.get("mirror"),
         "n_windows": {k: len(v) for k, v in by_split.items()},
         "steps": state.global_step,
         "wall_seconds": round(time.time() - t0, 1),
