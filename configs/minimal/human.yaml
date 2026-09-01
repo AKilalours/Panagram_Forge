@@ -1,0 +1,46 @@
+# Minimal-scale FORGE-HUMAN. 60k train + 15k eval + 250k reserve.
+#
+# Recorded limitation: max_tokens 400 makes FORGE v1 a single-window detector. The
+# windowing and aggregation path is therefore under-tested and must be evaluated
+# separately on a small long-document set before any claim about long documents.
+spec_version: data_spec_v1
+dataset_version: v0.1-minimal
+
+sources:
+  - id: fw
+    hf_repo: HuggingFaceFW/fineweb
+    config: sample-10BT
+    license: ODC-By-1.0
+    redistributable: false
+    class: train_and_reserve
+    train_share: 0.60
+    filters: { language_score_min: 0.85 }
+
+  - id: fwe
+    hf_repo: HuggingFaceFW/fineweb-edu
+    config: sample-10BT
+    license: ODC-By-1.0
+    redistributable: false
+    class: train_and_reserve
+    train_share: 0.40
+    filters: { language_score_min: 0.85, int_score_min: 4 }
+
+targets:
+  human_train: 60000
+  human_reserve: 250000
+  human_eval: 15000
+
+cleaning:
+  min_chars: 600
+  min_tokens: 150
+  max_tokens: 400        # one 512-token window after subword expansion
+  language: en
+  language_score_min: 0.85
+  minhash_permutations: 128
+  minhash_jaccard_threshold: 0.8
+  processing_version: clean_v1
+
+splits:
+  salt: forge-v1
+  ratios: { train: 0.80, val: 0.10, test: 0.10 }
+  group_key: source_group_id

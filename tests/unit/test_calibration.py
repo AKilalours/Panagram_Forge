@@ -42,3 +42,26 @@ def test_zero_temperature_is_rejected():
         pass
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_a_boundary_result_is_flagged_as_not_a_real_optimum():
+    """Observed in the first smoke run. If the search converges to the edge of its box,
+    the true optimum is outside the range and the returned value is the boundary, not a
+    fitted parameter. It looks identical to a real temperature in a report."""
+    import numpy as np
+
+    from forge.evaluation.calibration import fit_temperature
+
+    # wildly under-confident logits push the optimum below the 0.05 floor
+    rng = np.random.default_rng(3)
+    labels = rng.integers(0, 2, 2000)
+    base = np.where(labels == 1, 1.0, -1.0) * 0.01
+    logits = np.stack([-base, base], 1)
+    t, at_boundary = fit_temperature(logits, labels, return_boundary_flag=True)
+    assert at_boundary, f"temperature {t} sits at the search boundary and was not flagged"
+
+
+def test_a_normal_fit_is_not_flagged():
+    logits, labels = _overconfident()
+    t, at_boundary = fit_temperature(logits, labels, return_boundary_flag=True)
+    assert not at_boundary and 1.0 < t < 10.0

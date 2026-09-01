@@ -1,0 +1,81 @@
+# Minimal-scale generator roster. Four held-in families at 1.7B to 3.8B.
+#
+# WHY SMALLER MODELS: throughput roughly triples, which is what takes Phase 2 from
+# 22 GPU-hours to 1.5. These are still real, distinct generator families, which is what
+# the research question needs.
+#
+# RECORDED LIMITATION: smaller models produce more detectable text, so absolute FPR and
+# FNR will look better than a 7B-to-70B setup. The comparison BETWEEN arms is unaffected.
+# Absolute numbers must never be quoted as if they came from frontier-scale generators.
+#
+# ALL HELD-IN MODELS ARE NON-GATED on HuggingFace, so no license acceptance is needed.
+# The held-out gemma and llama entries ARE gated: accept their licenses at
+# huggingface.co/<model> and set HF_TOKEN, or swap in the non-gated alternatives noted.
+spec_version: data_spec_v1
+
+decoding_grid:
+  temperature: [0.5, 0.7, 1.0]
+  top_p: [0.9, 0.95]
+  include_greedy: true
+  max_new_tokens: 640
+
+families:
+  - family: qwen
+    provider: open_source
+    model_id: Qwen/Qwen2.5-3B-Instruct
+    revision: TODO_PIN_AT_FIRST_RUN     # `forge pin-revisions` fills these in
+    released: 2024-09
+    role: held_in
+    output_redistributable: true
+
+  - family: phi
+    provider: open_source
+    model_id: microsoft/Phi-3.5-mini-instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-08
+    role: held_in
+    output_redistributable: true
+
+  - family: smollm
+    provider: open_source
+    model_id: HuggingFaceTB/SmolLM2-1.7B-Instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-11
+    role: held_in
+    output_redistributable: true
+
+  - family: falcon
+    provider: open_source
+    model_id: tiiuae/Falcon3-3B-Instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-12
+    role: held_in
+    output_redistributable: true
+
+  # Held out. Never generate training data with these.
+  - family: gemma
+    provider: open_source
+    model_id: google/gemma-2-2b-it        # GATED. Non-gated fallback: Qwen/Qwen2.5-1.5B-Instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-06
+    role: held_out
+    output_redistributable: false
+
+  - family: deepseek
+    provider: open_source
+    model_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2025-01
+    role: held_out
+    output_redistributable: true
+
+  - family: api
+    provider: api
+    model_id: claude-sonnet-5
+    revision: dateless_id_is_pinned_snapshot
+    released: 2026-01
+    role: held_out
+    output_redistributable: false
+    budget:
+      max_documents: 2000
+      hard_stop_on_budget: true

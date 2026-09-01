@@ -1,0 +1,20 @@
+spec_version: data_spec_v1
+prompt_version: mirror_v1
+prompt_path: src/forge/generation/prompts/mirror_v1.txt
+generators_config: configs/minimal/generators.yaml
+
+target: 60000
+assignment: round_robin
+
+validation:
+  length_ratio_min: 0.6
+  length_ratio_max: 1.6
+  reject_assistant_preamble: true
+  max_minhash_jaccard_to_source: 0.5
+  max_retries: 2
+
+attribute_extraction:
+  fields: [topic, genre, register, target_tokens, structure, difficulty, key_anchors]
+  key_anchors_min: 3
+  key_anchors_max: 6
+  verbatim_copy_forbidden: true

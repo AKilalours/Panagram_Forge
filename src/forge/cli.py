@@ -57,6 +57,47 @@ def ingest(
     typer.echo(f"  manifest: {result.manifest_path}")
 
 
+@app.command("pin-revisions")
+def pin_revisions(
+    config: str = typer.Option("configs/generation/generators_minimal.yaml", "--config"),
+    write: bool = typer.Option(False, "--write", help="rewrite the config in place"),
+) -> None:
+    """Resolve each generator's HuggingFace repo revision and pin it.
+
+    'Generated with Qwen 3B' is not reproducible: the upstream repo can move and the same
+    config would then produce different data under the same dataset version. This
+    resolves the current commit sha for every open-source family so the roster is fixed.
+    """
+    from huggingface_hub import HfApi
+
+    from pathlib import Path
+
+    api = HfApi()
+    conf = cfg.load(config)
+    text = Path(cfg.REPO_ROOT / config).read_text()
+    resolved = {}
+    for fam in conf.get("families", []):
+        if fam.get("provider") != "open_source":
+            continue
+        try:
+            sha = api.model_info(fam["model_id"]).sha
+        except Exception as e:
+            typer.secho(f"  {fam['family']:<10} FAILED  {fam['model_id']}: {e}", fg=typer.colors.RED)
+            typer.echo("     gated model? accept its license on huggingface.co and set HF_TOKEN")
+            continue
+        resolved[fam["family"]] = sha
+        typer.echo(f"  {fam['family']:<10} {fam['model_id']:<45} {sha}")
+        text = text.replace(
+            f"model_id: {fam['model_id']}\n    revision: TODO_PIN_AT_FIRST_RUN",
+            f"model_id: {fam['model_id']}\n    revision: {sha}",
+        )
+    if write:
+        Path(cfg.REPO_ROOT / config).write_text(text)
+        typer.secho(f"pinned {len(resolved)} revisions into {config}", fg=typer.colors.GREEN)
+    else:
+        typer.secho("dry run; pass --write to update the config", fg=typer.colors.YELLOW)
+
+
 @app.command()
 def mirror(
     config: str = typer.Option(..., "--config"),
@@ -82,10 +123,28 @@ def mirror(
 
 
 @app.command()
-def train(config: str = typer.Option(..., "--config")) -> None:
-    """Phase 3: train a detector."""
-    cfg.load(config)
-    _not_yet("3", "training")
+def train(
+    config: str = typer.Option("configs/minimal/training_mirror.yaml", "--config"),
+    smoke: bool = typer.Option(False, "--smoke", help="tiny CPU run that exercises the whole path"),
+    resume: str = typer.Option(None, "--resume", help="checkpoint to resume from"),
+) -> None:
+    """Train a detector. Run --smoke first: it is the cheapest way to find a bug."""
+    from forge.training.train import run as _run
+
+    report = _run(config, smoke=smoke, resume=resume)
+    f = report.get("final", {})
+    if f:
+        typer.secho(
+            f"FPR@{report['fpr_budget']}={f.get('fpr'):.5f}  FNR={f.get('fnr'):.4f}  "
+            f"AUROC={f.get('auroc'):.4f}  ECE={f.get('ece'):.4f}",
+            fg=typer.colors.GREEN,
+        )
+        if not f.get("fpr_measurable", True):
+            typer.secho(
+                "  NOTE: too few human documents to resolve this FPR budget. "
+                "The FPR figure is not evidence.",
+                fg=typer.colors.YELLOW,
+            )
 
 
 @app.command()

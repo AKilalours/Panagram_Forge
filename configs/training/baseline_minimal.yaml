@@ -1,0 +1,33 @@
+# Minimal-scale baseline arm. Budget held EQUAL across arms: any improvement must come
+# from WHICH data, not HOW MUCH. See docs/evaluation.md.
+spec_version: data_spec_v1
+experiment: { id: forge_min_baseline, stage: baseline }
+model_config: configs/models/forge_base.yaml
+fpr_budget: 0.001
+
+paths:
+  human: data/silver
+  mirror: data/silver/mirrors
+  mixed: data/silver/mixed
+  out: outputs
+
+data:
+  dataset_version: v0.1-min
+  include: [human, ai_baseline]
+
+training:
+  batch_size: 32
+  grad_accum: 2
+  learning_rate: 2.0e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.06
+  epochs: 3
+  seed: 42
+  precision: bf16
+  gradient_checkpointing: true
+  token_loss_weight: 0.5
+  num_workers: 4
+  log_every: 50
+
+distributed: { strategy: none }
+tracking: { backend: wandb, project: forge }

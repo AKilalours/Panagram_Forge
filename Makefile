@@ -1,4 +1,4 @@
-.PHONY: help setup install-data install-train lint fmt test spec smoke smoke-mirror ingest mirror train eval mine serve up down clean
+.PHONY: help setup install-data install-train lint fmt test spec smoke smoke-mirror min-ingest min-mirror min-smoke min-train ingest mirror train eval mine serve up down clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -31,6 +31,19 @@ spec:             ## Validate that configs match the frozen Data Spec v1
 smoke:            ## Offline end-to-end run of the Phase 1 pipeline on a fixture corpus
 	./.venv/bin/python scripts/make_fixture_corpus.py --n 300
 	./.venv/bin/python -m forge.cli ingest --config configs/data/local_smoke.yaml --out data/silver/smoke --total 5000
+
+min-ingest:       ## Minimal scale: 60k train + 500k reserve, short docs
+	./.venv/bin/python -m forge.cli ingest --config configs/data/human_minimal.yaml --out data/silver
+
+min-mirror:       ## Minimal scale: 60k mirrors from 4 small held-in families
+	./.venv/bin/python -m forge.cli mirror --config configs/generation/mirror_minimal.yaml \
+		--humans data/silver --out data/silver/mirrors --backend vllm
+
+min-smoke:        ## 20 training steps on 200 examples. ALWAYS run this before a paid run
+	./.venv/bin/python -m forge.cli train --config configs/training/baseline_minimal.yaml --smoke
+
+min-train:        ## Minimal scale: baseline arm
+	./.venv/bin/python -m forge.cli train --config configs/training/baseline_minimal.yaml
 
 ingest:           ## Phase 1: build FORGE-HUMAN from configured sources
 	./.venv/bin/python -m forge.cli ingest --config configs/data/human.yaml

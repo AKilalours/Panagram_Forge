@@ -37,6 +37,16 @@ def spec_check() -> list[str]:
     """Return a list of violations. Empty list means the configs match the spec."""
     problems: list[str] = []
 
+    # Any additional generator rosters must obey the same held-out contract, or a
+    # minimal-scale run could quietly train on a held-out family and invalidate R3.
+    for extra in ("configs/minimal/generators.yaml",):
+        if (REPO_ROOT / extra).exists():
+            g = load(extra)
+            roles = {f["family"]: f["role"] for f in g.get("families", [])}
+            for fam in HELD_OUT_FAMILIES:
+                if roles.get(fam) != "held_out":
+                    problems.append(f"{extra}: family {fam!r} is {roles.get(fam)!r}, expected 'held_out'")
+
     human = load("configs/data/human.yaml")
     evals = load("configs/data/eval.yaml")
     gens = load("configs/generation/generators.yaml")

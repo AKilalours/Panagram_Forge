@@ -27,9 +27,19 @@ def _nll(logits: np.ndarray, labels: np.ndarray, t: float) -> float:
 
 
 def fit_temperature(
-    logits, labels, lo: float = 0.05, hi: float = 10.0, iters: int = 60
-) -> float:
-    """Golden-section search on NLL. Convex in log t for softmax, so this is safe."""
+    logits, labels, lo: float = 0.05, hi: float = 10.0, iters: int = 60,
+    return_boundary_flag: bool = False,
+):
+    """Golden-section search on NLL. Convex in log t for softmax, so this is safe.
+
+    Returns the temperature, or (temperature, at_boundary) when return_boundary_flag.
+
+    The boundary flag matters. If the search converges to `lo` or `hi`, the true optimum
+    lies outside the range and the returned value is the edge of the box, not a fitted
+    parameter. It looks exactly like a real temperature in a report. Observed in the very
+    first smoke run: an under-confident model drove the search to the 0.05 floor, which
+    would have been reported as a calibrated temperature.
+    """
     logits = np.asarray(logits, dtype=float)
     labels = np.asarray(labels, dtype=int)
     if logits.ndim != 2:
@@ -50,7 +60,9 @@ def fit_temperature(
             a, c, fc = c, d, fd
             d = a + phi * (b - a)
             fd = _nll(logits, labels, d)
-    return float((a + b) / 2)
+    t = float((a + b) / 2)
+    at_boundary = (t <= lo * 1.02) or (t >= hi * 0.98)
+    return (t, at_boundary) if return_boundary_flag else t
 
 
 def apply_temperature(logits, temperature: float) -> np.ndarray:

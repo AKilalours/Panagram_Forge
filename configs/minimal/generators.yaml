@@ -1,0 +1,74 @@
+# Minimal-scale generator roster. Same held-in / held-out structure as the frozen
+# roster in configs/generation/generators.yaml, at 1.5-4B instead of 7-9B.
+#
+# Recorded limitation: smaller models produce more detectable text, so absolute FPR and
+# FNR from this roster will look better than a 7B-to-70B setup would give. The
+# comparative result between training arms is unaffected. Never quote the absolute
+# numbers as if they came from frontier-scale generators.
+spec_version: data_spec_v1
+
+decoding_grid:
+  temperature: [0.5, 0.7, 1.0]
+  top_p: [0.9, 0.95]
+  include_greedy: true
+  max_new_tokens: 512
+
+families:
+  - family: qwen
+    provider: open_source
+    model_id: Qwen/Qwen2.5-3B-Instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-09
+    role: held_in
+    output_redistributable: true
+
+  - family: llama
+    provider: open_source
+    model_id: meta-llama/Llama-3.2-3B-Instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-09
+    role: held_in
+    output_redistributable: false
+
+  - family: phi
+    provider: open_source
+    model_id: microsoft/Phi-3.5-mini-instruct
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-08
+    role: held_in
+    output_redistributable: true
+
+  - family: mistral
+    provider: open_source
+    model_id: mistralai/Mistral-7B-Instruct-v0.3
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-05
+    role: held_in
+    output_redistributable: true
+
+  - family: gemma
+    provider: open_source
+    model_id: google/gemma-2-2b-it
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-06
+    role: held_out
+    output_redistributable: false
+
+  - family: deepseek
+    provider: open_source
+    model_id: deepseek-ai/DeepSeek-V2-Lite-Chat
+    revision: TODO_PIN_AT_FIRST_RUN
+    released: 2024-05
+    role: held_out
+    output_redistributable: true
+
+  - family: api
+    provider: api
+    model_id: claude-sonnet-5
+    revision: dateless_id_is_pinned_snapshot
+    released: 2026-01
+    role: held_out
+    output_redistributable: false
+    budget:
+      max_documents: 5000
+      hard_stop_on_budget: true
