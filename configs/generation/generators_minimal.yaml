@@ -23,7 +23,7 @@ families:
   - family: qwen
     provider: open_source
     model_id: Qwen/Qwen2.5-3B-Instruct
-    revision: TODO_PIN_AT_FIRST_RUN     # `forge pin-revisions` fills these in
+    revision: aa8e72537993ba99e69dfaafa59ed015b17504d1
     released: 2024-09
     role: held_in
     output_redistributable: true
@@ -31,7 +31,7 @@ families:
   - family: phi
     provider: open_source
     model_id: microsoft/Phi-3.5-mini-instruct
-    revision: TODO_PIN_AT_FIRST_RUN
+    revision: 2fe192450127e6a83f7441aef6e3ca586c338b77
     released: 2024-08
     role: held_in
     output_redistributable: true
@@ -39,7 +39,7 @@ families:
   - family: smollm
     provider: open_source
     model_id: HuggingFaceTB/SmolLM2-1.7B-Instruct
-    revision: TODO_PIN_AT_FIRST_RUN
+    revision: 31b70e2e869a7173562077fd711b654946d38674
     released: 2024-11
     role: held_in
     output_redistributable: true
@@ -47,7 +47,7 @@ families:
   - family: falcon
     provider: open_source
     model_id: tiiuae/Falcon3-3B-Instruct
-    revision: TODO_PIN_AT_FIRST_RUN
+    revision: 411bb94318f94f7a5735b77109f456b1e74b42a1
     released: 2024-12
     role: held_in
     output_redistributable: true
@@ -56,7 +56,7 @@ families:
   - family: gemma
     provider: open_source
     model_id: google/gemma-2-2b-it        # GATED. Non-gated fallback: Qwen/Qwen2.5-1.5B-Instruct
-    revision: TODO_PIN_AT_FIRST_RUN
+    revision: 299a8560bedf22ed1c72a8a11e7dce4a7f9f51f8
     released: 2024-06
     role: held_out
     output_redistributable: false
@@ -64,7 +64,7 @@ families:
   - family: deepseek
     provider: open_source
     model_id: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
-    revision: TODO_PIN_AT_FIRST_RUN
+    revision: ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562
     released: 2025-01
     role: held_out
     output_redistributable: true
