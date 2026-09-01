@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FORGE</title>
+<style>
+  :root{--bg:#fbfbf9;--fg:#1a1a18;--mut:#6b6b63;--line:#e2e2dc;--acc:#3b5bdb;--warn:#b45309;--ok:#15803d}
+  @media (prefers-color-scheme:dark){:root{--bg:#16161a;--fg:#e8e8e3;--mut:#9a9a92;--line:#2c2c33;--acc:#7c93f5}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,sans-serif}
+  .wrap{max-width:760px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:20px;margin:0;letter-spacing:-.01em}
+  .sub{color:var(--mut);font-size:13px;margin:2px 0 24px}
+  textarea{width:100%;min-height:200px;padding:14px;border:1px solid var(--line);border-radius:8px;
+           background:transparent;color:var(--fg);font:14px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+  button{margin-top:12px;padding:9px 20px;border:0;border-radius:7px;background:var(--acc);color:#fff;
+         font-size:14px;font-weight:500;cursor:pointer}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .card{margin-top:24px;border:1px solid var(--line);border-radius:10px;padding:18px}
+  .verdict{font-size:22px;font-weight:600;letter-spacing:-.01em}
+  .uncertain{color:var(--warn)}
+  .bar{height:7px;background:var(--line);border-radius:4px;overflow:hidden;margin:10px 0 4px}
+  .bar>i{display:block;height:100%;background:var(--acc)}
+  dl{display:grid;grid-template-columns:auto 1fr;gap:5px 14px;margin:16px 0 0;font-size:13px}
+  dt{color:var(--mut)}
+  dd{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .note{margin-top:16px;padding:11px 13px;border-left:3px solid var(--warn);background:rgba(180,83,9,.07);
+        font-size:13px;color:var(--mut)}
+  .seg-h{background:rgba(21,128,61,.14)}
+  .seg-a{background:rgba(180,83,9,.20)}
+  .segs{margin-top:14px;padding:12px;border:1px solid var(--line);border-radius:7px;
+        font:13px/1.7 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+  footer{margin-top:32px;color:var(--mut);font-size:12px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>FORGE</h1>
+  <p class="sub">Failure-driven AI-content detection &middot; research system</p>
+
+  <textarea id="t" placeholder="Paste text here..."></textarea>
+  <button id="go">Analyze</button>
+
+  <div id="out"></div>
+
+  <footer id="foot">Model: not loaded &middot; no model has been trained yet</footer>
+</div>
+<script>
+// The two things this UI must always show, because a detector that hides them misleads:
+// the model version, and the FPR budget its threshold was calibrated against. A user
+// seeing "AI, 96% confident" deserves to know what that 96% was tuned to protect.
+const out = document.getElementById('out'), foot = document.getElementById('foot');
+
+fetch('/v1/model').then(r => r.ok ? r.json() : Promise.reject(r))
+  .then(m => {
+    foot.textContent = `Model: ${m.model_version} · threshold ${m.threshold} · FPR budget ${m.fpr_budget}`
+      + (m.calibrated ? ' · calibrated' : ' · UNCALIBRATED')
+      + (m.abstains ? ` · abstains in [${m.uncertain_band[0]}, ${m.uncertain_band[1]})` : '');
+  })
+  .catch(() => { foot.textContent = 'Model: not loaded · no model has been trained yet'; });
+
+document.getElementById('go').onclick = async () => {
+  const text = document.getElementById('t').value.trim();
+  if (!text) return;
+  out.innerHTML = '<div class="card">Analyzing...</div>';
+  try {
+    const r = await fetch('/v1/detect', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({text})
+    });
+    const d = await r.json();
+    if (!r.ok) { out.innerHTML = `<div class="card"><div class="verdict">Unavailable</div>
+      <p class="sub" style="margin:8px 0 0">${d.detail || r.statusText}</p></div>`; return; }
+    render(d);
+  } catch (e) {
+    out.innerHTML = `<div class="card"><div class="verdict">Error</div><p class="sub">${e}</p></div>`;
+  }
+};
+
+function render(d) {
+  const pct = (d.ai_probability * 100).toFixed(1);
+  const unc = d.prediction === 'uncertain';
+  out.innerHTML = `
+  <div class="card">
+    <div class="verdict ${unc ? 'uncertain' : ''}">${d.prediction.toUpperCase()}</div>
+    <div class="bar"><i style="width:${pct}%"></i></div>
+    <div class="sub" style="margin:0">AI probability ${pct}%</div>
+    ${unc ? `<div class="note"><strong>No claim made.</strong> ${d.uncertainty.reason}
+      This is a deliberate abstention, not a failure: at this operating point a coin flip
+      dressed as a verdict would be worse than saying nothing.</div>` : ''}
+    ${d.uncertainty.calibrated ? '' : `<div class="note">Scores are <strong>not calibrated</strong>.
+      Treat the probability as a ranking, not a likelihood.</div>`}
+    <dl>
+      <dt>Model</dt><dd>${d.model_version}</dd>
+      <dt>Threshold</dt><dd>${d.threshold}</dd>
+      <dt>FPR budget</dt><dd>${d.fpr_budget}</dd>
+      <dt>Confidence</dt><dd>${d.confidence.toFixed(3)}</dd>
+    </dl>
+    ${(d.segments || []).length ? `<div class="segs">${d.segments.map(s =>
+        `<span class="${s.ai_probability >= d.threshold ? 'seg-a' : 'seg-h'}">[${s.start}-${s.end}] ${(s.ai_probability*100).toFixed(0)}%</span>`
+      ).join(' ')}</div>` : ''}
+    <div class="note" style="border-color:var(--mut)">FORGE is a research system. It must not be
+      used as sole evidence in an academic-misconduct or employment decision.</div>
+  </div>`;
+}
+</script>
+</body>
+</html>

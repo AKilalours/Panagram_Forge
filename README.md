@@ -19,8 +19,8 @@
 | 4 | Hard negative mining loop | mining, atlas, clustering and selection built and tested against synthetic failure structure; **needs a trained model to mine against** |
 | 5 | External evaluation (RAID, MAGE, HC3) | loaders and contamination checking built and tested against schema fixtures; **datasets unreachable from the dev environment** |
 | 6 | Adversarial laboratory | 8 offline attacks + lab runner built and tested; 4 model-based attacks refuse rather than fake |
-| 7 | Distributed training (FSDP / DeepSpeed / Ray), profiling | not started |
-| 8 | Production serving, release gate, monitoring, UI | not started |
+| 7 | Distributed training (FSDP / DeepSpeed / Ray), profiling | scaling math, config generation and the batch-invariant benchmark matrix built and tested; **needs GPUs to measure** |
+| 8 | Production serving, release gate, monitoring, UI | decision policy with abstention, batching, drift, feedback state machine, registry promotion and UI built and tested; **needs a model to serve** |
 
 Every number in this repo is either measured and committed with the run that
 produced it, or absent. There are no placeholder metrics in results tables.

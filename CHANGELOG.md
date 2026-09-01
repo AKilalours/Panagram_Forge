@@ -127,3 +127,38 @@ Bugs found and fixed:
   survives. Flag corrected, and the flags are now cross-checked against measurement.
 - config/code drift: grammar_edit was configured but not implemented, and three
   implemented attacks were missing from the config. Now checked in both directions.
+
+## Phase 7 - distributed training
+
+- scaling.py: global-batch arithmetic, scaling efficiency, MFU, cost per run
+- distributed.py: DeepSpeed / FSDP / Ray config generation and a batch-invariant
+  benchmark matrix
+
+The correctness point this phase turns on: `batch_size` in every config is PER DEVICE, so
+moving from 1 GPU to 4 without adjusting gradient accumulation quadruples the global batch
+and changes the learning dynamics. A throughput or quality comparison run that way is
+comparing two different experiments. `assert_global_batch_invariant` is the check, and
+`benchmark_matrix` builds a strategy-by-world-size grid that cannot violate it.
+
+MFU above 1.0 raises rather than being reported: a run cannot beat the hardware, so the
+FLOPs model or the quoted peak is wrong.
+
+## Phase 8 - serving, monitoring, release gate
+
+- decision.py: three verdicts, not two. A detector at a 0.1 percent FPR budget abstains
+  in the band where it is least sure rather than dressing a coin flip as a verdict.
+  Confidence is distance from the threshold, not the raw score. Every response carries
+  model version, threshold and FPR budget.
+- batching.py: batches by WINDOW count rather than request count, preserves arrival order
+  (length sorting starves long documents into a P99 cliff), flushes on age so tail latency
+  is not worst at low load.
+- drift.py: PSI and KL, with score drift paired against input drift so an alert says
+  whether to suspect the deploy or the traffic. Drift on fewer than 200 samples reports
+  unmeasurable rather than a number.
+- feedback.py: a state machine with a human in it. Raw thumbs-down never becomes a label;
+  verification requires a verifier-supplied label, because the user's claim is the thing
+  being checked, not the answer.
+- model_registry.py: promotion refuses a candidate with no gate result, since "not
+  evaluated" is not "no failures found". Production goes through canary; rollback skips it
+  deliberately.
+- api/main.py and ui/index.html: both always surface model version and FPR budget.

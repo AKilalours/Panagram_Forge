@@ -114,9 +114,34 @@ def mine(
 
 
 @app.command()
-def gate(model_version: str = typer.Option(..., "--model-version")) -> None:
-    """Phase 8: run the release gate against a candidate model."""
-    _not_yet("8", "the release gate")
+def gate(
+    model_version: str = typer.Option(..., "--model-version"),
+    eval_report: str = typer.Option(None, "--eval-report", help="JSON from the evaluation lab"),
+    config: str = typer.Option("configs/eval/regimes.yaml", "--config"),
+) -> None:
+    """Run the release gate against a candidate model's evaluation report."""
+    import json
+    from pathlib import Path
+
+    from forge.evaluation.release_gate import evaluate
+
+    gate_cfg = cfg.load(config)["release_gate"]
+    if eval_report is None:
+        raise PhaseNotImplemented(
+            "the release gate needs an evaluation report to judge. The gate policy is "
+            "implemented and tested; produce a report with `forge evaluate` once a model "
+            "exists, then pass it with --eval-report."
+        )
+    report = json.loads(Path(eval_report).read_text())
+    metrics = report.get("headline") or report
+    result = evaluate(metrics, gate_cfg)
+    if result.passed:
+        typer.secho(f"GATE PASSED: {model_version} may be promoted to canary", fg=typer.colors.GREEN)
+        return
+    typer.secho(f"GATE FAILED: {model_version} must not ship", fg=typer.colors.RED, bold=True)
+    for f in result.failures:
+        typer.echo(f"  - {f}")
+    sys.exit(1)
 
 
 if __name__ == "__main__":

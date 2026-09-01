@@ -12,8 +12,8 @@ done when the criterion is measured and the measurement is committed.
 | 4 | Hard negative loop | components **done and tested**; exit needs a first mining pass producing >=10 distinct failure clusters with acceptable silhouette, and a retrained model's FPR compared to Phase 3 at equal data budget, on both trained and HELD-OUT failure clusters |
 | 5 | External evaluation | loaders **done and tested against schema fixtures**; exit needs RAID-extra, MAGE-test and HC3 numbers with a passing contamination check, which requires network access and a trained model |
 | 6 | Adversarial lab | attacks and runner **done and tested**; exit needs the delta-FNR table in both preprocessing conditions for a real model, plus RAID's 12 attacks, plus a real paraphrase model for the 4 model-based attacks |
-| 7 | Distributed + profiling | FSDP vs DeepSpeed throughput on identical config; one profiled bottleneck fixed with before/after traces |
-| 8 | Production | API + release gate + monitoring + UI; gate blocks at least one real candidate |
+| 7 | Distributed + profiling | scaling math and configs **done and tested**; exit needs FSDP vs DeepSpeed throughput at an ASSERTED-identical global batch, plus one profiled bottleneck fixed with before/after traces |
+| 8 | Production | components **done and tested**; exit needs the gate to block at least one real candidate, and a canary promotion on real traffic |
 
 ## Blocking questions
 
