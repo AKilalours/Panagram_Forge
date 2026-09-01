@@ -21,3 +21,14 @@ checkpoints/
 .Rhistory
 .venv/
 data/publishable/
+
+# Corpus data. FineWeb and FineWeb-Edu are ODC-By 1.0 but the underlying web content
+# carries its own rights and Common Crawl's terms still apply, so FORGE never
+# redistributes corpus text. See docs/data_spec_v1.md section 8: what is publishable is
+# ids, metadata and hashes, never the documents themselves.
+#
+# The per-directory .gitignore files under data/ only covered the directories that
+# existed at scaffold time. `forge ingest` writes source=*/split=* trees that did not,
+# so 60,000 FineWeb documents were staged for commit. This rule covers the tree itself.
+data/
+!data/**/.gitkeep
