@@ -36,7 +36,9 @@ echo "torch==${TORCH_VER}" > /tmp/forge-constraints.txt
 
 log "install"
 pip install -q -U pip
-pip install -q -c /tmp/forge-constraints.txt -e ".[data,train,mining,serve]"
+# dev carries pytest and ruff. Omitting it left the pod unable to run the suite,
+# which is the one check that proves the install actually works on the GPU.
+pip install -q -c /tmp/forge-constraints.txt -e ".[data,train,mining,serve,dev]"
 
 log "install vllm"
 # vllm pins torch tightly. If it cannot satisfy the constraint, install it WITHOUT
@@ -58,9 +60,12 @@ assert ok, (
 )
 PY
 
+log "verify vllm"
+python -c "import importlib.util as u;spec=u.find_spec('vllm');print('vllm installed' if spec else 'vllm NOT installed -> generation must use --backend transformers')"
+
 log "verify the package and tests"
 python -m forge.cli spec-check
-pytest -q
+python -m pytest -q
 
 log "ready"
 cat <<'MSG'
