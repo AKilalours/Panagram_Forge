@@ -27,13 +27,24 @@ LOG=/workspace/run_all.log
 say() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
 count() {
+  # THE BUG THIS FIXES, and it aborted two runs whose data was already on disk.
+  #
+  # This called ds.dataset(<dir>) and let discovery walk the directory. data/silver holds
+  # MANIFEST.json next to the parquet partitions, pyarrow tried to read the JSON as
+  # parquet, threw, and the except returned 0. The log then said "human corpus: 0
+  # documents" about a corpus of exactly 60,000 documents, and the pipeline aborted.
+  #
+  # Globbing for *.parquet and handing pyarrow an explicit FILE LIST removes discovery
+  # from the picture entirely: a non-parquet file in the directory can no longer decide
+  # whether the stage runs. An empty list is a real zero, not a swallowed exception.
   python - "$1" <<'PY' 2>/dev/null || echo 0
+import glob
 import sys
+
 import pyarrow.dataset as ds
-try:
-    print(ds.dataset(sys.argv[1], format="parquet", partitioning="hive").count_rows())
-except Exception:
-    print(0)
+
+files = sorted(glob.glob(f"{sys.argv[1]}/**/*.parquet", recursive=True))
+print(ds.dataset(files, format="parquet").count_rows() if files else 0)
 PY
 }
 
