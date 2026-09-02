@@ -192,9 +192,14 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
     tok = AutoTokenizer.from_pretrained(mcfg["backbone"])
     limit = 200 if smoke else dcfg.get("limit")
     arm = validate_config(cfg)
+    # ai_cap holds the AI budget equal across arms. Each arm's validator rejects at its
+    # own rate, so generation yields different counts; without the cap the comparison
+    # measures data volume as much as data strategy. Set the SAME value in every arm's
+    # config, equal to the smallest arm's accepted count.
     examples = load_examples(
         human_root=paths.get("human"), ai_root=paths.get("ai") or paths.get("mirror"),
         mixed_root=paths.get("mixed"), limit=limit, expect_arm=arm,
+        ai_cap=dcfg.get("ai_cap"),
     )
     if not examples:
         raise RuntimeError(

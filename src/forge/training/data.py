@@ -56,6 +56,7 @@ def load_examples(
     splits: tuple[str, ...] = ("train", "val", "test"),
     limit: int | None = None,
     expect_arm: str | None = None,
+    ai_cap: int | None = None,
     mirror_root: str | Path | None = None,   # deprecated alias
 ) -> list[RawExample]:
     """Load one arm's training data.
@@ -69,6 +70,14 @@ def load_examples(
     Nothing would have errored. Two successful runs, two plausible rows in the results
     table, one false finding. So the arm is now declared in the config and verified
     against the `prompt_version` recorded on every generated document.
+
+    `ai_cap` holds the AI budget equal across arms. Generation produces a different
+    NUMBER of accepted documents per arm, because each arm's validator rejects at its own
+    rate: the mirror arm accepts a length ratio in [0.6, 1.6], the random arm [0.5, 2.0],
+    and the mirror arm's first-pass rejection ran near 40%. Without a cap, one arm trains
+    on thousands more documents than the other and the comparison stops being about
+    matching and starts being about volume, which is the one confound the experiment was
+    designed to exclude. Set it to the smaller arm's count for both arms.
     """
     ai_root = ai_root or mirror_root
     human_rows: list[RawExample] = []
@@ -123,9 +132,43 @@ def load_examples(
                                              int(ai / max(len(r["text"]), 1) >= 0.5), spans,
                                              r.get("domain", "unknown")))
 
+    if ai_cap is not None and len(ai_rows) > ai_cap:
+        ai_rows = cap_documents(ai_rows, ai_cap)
+
     if limit is None:
         return human_rows + ai_rows + mixed_rows
     return interleave(*_by_source_and_split(human_rows, ai_rows, mixed_rows), limit=limit)
+
+
+def cap_documents(rows: list[RawExample], cap: int) -> list[RawExample]:
+    """Keep `cap` documents, chosen deterministically and evenly across splits.
+
+    Ranking by a salted hash of the document id is stable across machines and runs, and
+    independent of read order, so two arms capped to the same number are capped the same
+    way rather than by whatever the filesystem returned first. Capping per split keeps the
+    train/val/test proportions the generation produced; a global cap would let one split
+    absorb the whole reduction.
+    """
+    import hashlib
+
+    def rank(row: RawExample) -> str:
+        return hashlib.sha256(f"cap:{row.doc_id}".encode()).hexdigest()
+
+    by_split: dict[str, list[RawExample]] = {}
+    for row in rows:
+        by_split.setdefault(row.split, []).append(row)
+
+    keep: set[str] = set()
+    remaining = cap
+    for i, (split, split_rows) in enumerate(sorted(by_split.items())):
+        share = round(cap * len(split_rows) / len(rows))
+        # Last split takes the rounding remainder so the total is exact.
+        if i == len(by_split) - 1:
+            share = remaining
+        share = max(0, min(share, len(split_rows), remaining))
+        keep |= {r.doc_id for r in sorted(split_rows, key=rank)[:share]}
+        remaining -= share
+    return [r for r in rows if r.doc_id in keep]
 
 
 def _by_source_and_split(*sources: list[RawExample]) -> list[list[RawExample]]:

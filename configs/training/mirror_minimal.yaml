@@ -13,6 +13,11 @@ paths:
 
 data:
   dataset_version: v0.1-min
+  # EQUAL BUDGET. Each arm's validator rejects at its own rate, so generation yields
+  # different accepted counts. Set this to the SMALLER arm's count, identically in every
+  # arm's config, before training. Left null the comparison measures data volume as much
+  # as data strategy. Fill it in from the generation stats, do not guess.
+  ai_cap: null
   arm: mirror              # verified against prompt_version at load
 
 training:

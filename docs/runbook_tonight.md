@@ -47,6 +47,34 @@ between them is meaningless.
 
 ---
 
+## 1b. Set the equal budget. Do not skip this.
+
+Each arm's validator rejects at its own rate, so the two arms finish generation with
+DIFFERENT accepted counts. Training on those counts as-is confounds the experiment: arm A
+winning could just mean arm A had more documents.
+
+Count what each arm actually produced:
+
+```bash
+python - <<'PY'
+import glob, pyarrow.parquet as pq
+for root in ("data/silver/mirrors", "data/silver/random"):
+    n = sum(pq.read_metadata(f).num_rows for f in glob.glob(f"{root}/split=*/*.parquet"))
+    print(root, n)
+PY
+```
+
+Take the SMALLER number and write it as `data.ai_cap` in BOTH
+`configs/training/baseline_minimal.yaml` and `configs/training/mirror_minimal.yaml`.
+The same value in both files. Commit the change, so the table's numbers can be traced to
+the budget they were trained under.
+
+`cap_documents` then selects that many documents per arm deterministically, keeping each
+arm's split proportions, so both arms train on an equal AI budget without regenerating
+anything.
+
+---
+
 ## 2. Smoke test. Five minutes, catches config errors before a paid run.
 
 ```bash
