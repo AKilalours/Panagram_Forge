@@ -24,13 +24,35 @@ from forge.image.fetch import SourceImage, fetch_corpus, sample_ids  # noqa: E40
 from forge.image.normalize import POLICY_V1, describe  # noqa: E402
 
 
-def _scene(seed: int, w: int = 900, h: int = 700, fmt: str = "JPEG") -> bytes:
-    img = Image.new("RGB", (w, h))
-    for x in range(0, w, 3):
-        for y in range(0, h, 5):
-            img.putpixel((x, y), ((x * seed) % 256, (y * 3) % 256, (x + y + seed) % 256))
+def _scene(seed: int, w: int = 640, h: int = 520, fmt: str = "JPEG") -> bytes:
+    """A distinct image per seed, with structure in EVERY pixel.
+
+    An earlier version of this helper painted only every third column, leaving most of the
+    frame black. Two such images downscale to nearly the same 8x9 grayscale grid, so the
+    deduplicator correctly called them duplicates and the test that wanted two distinct
+    images got one. The bug was in the fixture: a near-duplicate detector is supposed to
+    collapse two nearly-blank frames.
+
+    Seed controls the stripe period and phase, so different seeds differ in gradient
+    structure, which is what dhash actually measures.
+    """
+    period = 3 + (seed % 7)
+    data = bytearray()
+    for y in range(h):
+        for x in range(w):
+            data += bytes(
+                (
+                    ((x // period) * 53 + seed * 17) % 256,
+                    ((y // (period + 2)) * 31 + seed * 29) % 256,
+                    ((x + y) * (seed + 1)) % 256,
+                )
+            )
+    img = Image.frombytes("RGB", (w, h), bytes(data))
     buf = io.BytesIO()
-    img.save(buf, format=fmt, quality=88) if fmt == "JPEG" else img.save(buf, format=fmt)
+    if fmt == "JPEG":
+        img.save(buf, format="JPEG", quality=88)
+    else:
+        img.save(buf, format=fmt)
     return buf.getvalue()
 
 
