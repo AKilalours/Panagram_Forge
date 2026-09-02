@@ -311,8 +311,18 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
     )).to(device)
 
     accum = tcfg.get("grad_accum", 1)
-    epochs = 1 if smoke else tcfg["epochs"]
-    steps_per_epoch = math.ceil(len(dl_train) / accum)
+    steps_per_epoch = max(1, math.ceil(len(dl_train) / accum))
+    # A SMOKE RUN THAT TAKES THREE STEPS TESTS ALMOST NOTHING. --smoke declared a budget of
+    # 20 optimizer steps but ran a single epoch, and one epoch over 200 examples at batch 32
+    # with grad_accum 2 is about seven batches, so THREE optimizer steps. The run reported a
+    # val block whose AUROC matched a completely untrained model to four decimal places,
+    # because that is what it was measuring. A smoke run exists to exercise the optimizer,
+    # the scheduler, the checkpoint write and the eval path; three steps at the front of a
+    # warmup barely exercises the first two.
+    #
+    # So take enough epochs to actually reach the step budget. The existing `stop` flag ends
+    # the run the moment the budget is hit, so this cannot overshoot.
+    epochs = max(1, math.ceil(20 / steps_per_epoch)) if smoke else tcfg["epochs"]
     total_steps = 20 if smoke else steps_per_epoch * epochs
 
     decay = [p for n, p in model.named_parameters() if p.requires_grad and "bias" not in n and "LayerNorm" not in n]
