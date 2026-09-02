@@ -23,14 +23,23 @@ from collections import Counter
 
 import pytest
 
-from forge.training.data import RawExample, interleave
+from forge.training.data import RawExample, _by_source_and_split, interleave
 
 
-def _rows(prefix: str, label: int, n: int) -> list[RawExample]:
+def _rows(prefix: str, label: int, n: int, split: str = "train") -> list[RawExample]:
     return [
-        RawExample(f"{prefix}{i}", f"grp_{prefix}{i}", "train", "text", label, None)
+        RawExample(f"{prefix}_{split}_{i}", f"grp_{prefix}{i}", split, "text", label, None)
         for i in range(n)
     ]
+
+
+def _partitioned(prefix: str, label: int) -> list[RawExample]:
+    """Laid out the way the parquet files are: all of one split, then the next."""
+    return (
+        _rows(prefix, label, 100, "test")
+        + _rows(prefix, label, 800, "train")
+        + _rows(prefix, label, 100, "val")
+    )
 
 
 HUMANS = _rows("h", 0, 500)
@@ -94,3 +103,33 @@ def test_selection_is_deterministic() -> None:
 def test_no_document_is_returned_twice() -> None:
     got = interleave(HUMANS, AI, MIXED, limit=400)
     assert len({r.doc_id for r in got}) == len(got)
+
+
+def test_a_limited_load_spans_every_split() -> None:
+    """The second half of the bug.
+
+    Round-robining over sources alone still drew from the front of each list, and the
+    parquet files are partitioned by split, so a 200-row limit returned only `test`
+    rows. Training then failed with "no training windows after windowing", which names
+    the symptom rather than the cause.
+    """
+    buckets = _by_source_and_split(_partitioned("h", 0), _partitioned("a", 1))
+    got = interleave(*buckets, limit=200)
+    splits = Counter(r.split for r in got)
+    assert set(splits) == {"train", "val", "test"}, f"only these splits appeared: {dict(splits)}"
+
+
+def test_a_limited_load_spans_splits_and_classes_together() -> None:
+    buckets = _by_source_and_split(_partitioned("h", 0), _partitioned("a", 1))
+    got = interleave(*buckets, limit=120)
+    pairs = {(r.split, r.label) for r in got}
+    for split in ("train", "val", "test"):
+        assert (split, 0) in pairs, f"no human rows in {split}"
+        assert (split, 1) in pairs, f"no AI rows in {split}"
+
+
+def test_bucketing_preserves_every_row() -> None:
+    sources = [_partitioned("h", 0), _partitioned("a", 1)]
+    buckets = _by_source_and_split(*sources)
+    assert sum(len(b) for b in buckets) == sum(len(s) for s in sources)
+    assert len({r.doc_id for b in buckets for r in b}) == 2000

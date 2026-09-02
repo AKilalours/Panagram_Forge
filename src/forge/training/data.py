@@ -123,7 +123,27 @@ def load_examples(
                                              int(ai / max(len(r["text"]), 1) >= 0.5), spans,
                                              r.get("domain", "unknown")))
 
-    return interleave(human_rows, ai_rows, mixed_rows, limit=limit)
+    if limit is None:
+        return human_rows + ai_rows + mixed_rows
+    return interleave(*_by_source_and_split(human_rows, ai_rows, mixed_rows), limit=limit)
+
+
+def _by_source_and_split(*sources: list[RawExample]) -> list[list[RawExample]]:
+    """One bucket per (source, split) pair, so a limit spans both.
+
+    Round-robining over sources alone is not enough. The parquet files are partitioned by
+    split and read in sorted order, so the front of each source's list is a single split:
+    a 200-row limit drew 100 humans and 100 AI documents that were all `test`, leaving no
+    training windows at all. Splitting the buckets further means a limit always contains
+    train, val and test.
+    """
+    buckets: list[list[RawExample]] = []
+    for rows in sources:
+        grouped: dict[str, list[RawExample]] = {}
+        for row in rows:
+            grouped.setdefault(row.split, []).append(row)
+        buckets.extend(grouped[key] for key in sorted(grouped))
+    return buckets
 
 
 def interleave(*buckets: list[RawExample], limit: int | None = None) -> list[RawExample]:
@@ -140,7 +160,7 @@ def interleave(*buckets: list[RawExample], limit: int | None = None) -> list[Raw
     never a subsample, it is a filter on source.
 
     Round-robin across the buckets so a limit is a real sample of what a full run would
-    see. Unlimited loads keep the original concatenated order.
+    see. Callers pass one bucket per (source, split) pair; see _by_source_and_split.
     """
     if limit is None:
         return [row for bucket in buckets for row in bucket]
