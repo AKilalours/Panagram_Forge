@@ -124,7 +124,7 @@ def generate_random(
     max_retries: int = 2,
 ) -> RandomResult:
     from forge.generation.mirror import _PREAMBLE
-    from forge.generation.run import build_generator
+    from forge.generation.run import GENERATION_BATCH, build_generator
 
     if not length_pool:
         raise ValueError("length_pool is empty; read it from the human corpus")
@@ -132,49 +132,105 @@ def generate_random(
     roster = parse_roster(generators_cfg)
     families = held_in_families(roster)
     grid = generators_cfg.get("decoding_grid", {})
-    cache: dict[str, object] = {}
     used: set[str] = set()
     stats = ValidationStats()
-    out: list[SyntheticDocument] = []
     now = datetime.now(timezone.utc)
 
+    # PASS 1: prepare every document's spec, family and decoding without a model loaded.
+    # Same restructuring as the mirror arm, for the same two reasons: a vllm engine
+    # reserves most of the GPU so only one may be alive at a time, and one prompt per
+    # generate() call never engages continuous batching. See forge/generation/run.py.
+    #
+    # Arm A must be fixed identically to Arm B or the comparison is between a working
+    # pipeline and a broken one rather than between two data strategies.
+    prepared: list[tuple[int, object, object, Decoding]] = []
     for i in range(n):
         spec = spec_for(i, length_pool)
         doc_key = f"rand_{i}"
         fam = assign_family(doc_key, families)
         used.add(fam.family)
-        gen = cache.setdefault(fam.family, build_generator(fam, backend))
-        decoding: Decoding = assign_decoding(doc_key, grid)
+        prepared.append((i, spec, fam, assign_decoding(doc_key, grid)))
 
-        accepted = None
-        for attempt in range(max_retries + 1):
-            d = Decoding(decoding.temperature, decoding.top_p, decoding.max_new_tokens,
-                         (decoding.seed or 0) + attempt)
-            text = strip_wrapper(gen.generate([spec.prompt()], d)[0])
-            if not text:
-                stats.reject("empty"); continue
-            if _PREAMBLE.match(text):
-                stats.reject("assistant_preamble"); continue
-            ratio = len(text.split()) / max(spec.target_tokens, 1)
-            if ratio < length_ratio_min:
-                stats.reject("too_short"); continue
-            if ratio > length_ratio_max:
-                stats.reject("too_long"); continue
-            accepted = (text, d); break
-        if accepted is None:
+    by_family: dict[str, list[tuple[int, object, object, Decoding]]] = {}
+    for item in prepared:
+        by_family.setdefault(item[2].family, []).append(item)
+
+    # PASS 2: one family at a time, batched, released before the next.
+    accepted: dict[int, tuple[str, Decoding]] = {}
+    identity: dict[str, tuple[str, str, str]] = {}
+    for family in sorted(by_family):
+        items = by_family[family]
+        fam0 = items[0][2]
+        gen = build_generator(fam0, backend)
+        identity[family] = (
+            getattr(gen, "model_id", fam0.model_id),
+            getattr(gen, "revision", fam0.revision),
+            fam0.provider,
+        )
+        print(f"[random] family={family} documents={len(items)} backend={backend}", flush=True)
+        try:
+            pending = items
+            for attempt in range(max_retries + 1):
+                if not pending:
+                    break
+                decs = [
+                    Decoding(d.temperature, d.top_p, d.max_new_tokens, (d.seed or 0) + attempt)
+                    for (_, _, _, d) in pending
+                ]
+                prompts = [spec.prompt() + (" " * attempt) for (_, spec, _, _) in pending]
+                texts: list[str] = []
+                for j in range(0, len(prompts), GENERATION_BATCH):
+                    texts.extend(
+                        gen.generate_many(
+                            prompts[j : j + GENERATION_BATCH], decs[j : j + GENERATION_BATCH]
+                        )
+                    )
+                    done = min(j + GENERATION_BATCH, len(prompts))
+                    print(
+                        f"[random] family={family} attempt={attempt} {done}/{len(prompts)}",
+                        flush=True,
+                    )
+                still = []
+                for item, d, raw in zip(pending, decs, texts):
+                    i, spec = item[0], item[1]
+                    text = strip_wrapper(raw)
+                    reason = None
+                    if not text:
+                        reason = "empty"
+                    elif _PREAMBLE.match(text):
+                        reason = "assistant_preamble"
+                    else:
+                        ratio = len(text.split()) / max(spec.target_tokens, 1)
+                        if ratio < length_ratio_min:
+                            reason = "too_short"
+                        elif ratio > length_ratio_max:
+                            reason = "too_long"
+                    if reason is None:
+                        accepted[i] = (text, d)
+                        stats.accepted += 1
+                    else:
+                        stats.reject(reason)
+                        still.append(item)
+                pending = still
+        finally:
+            gen.close()
+
+    # PASS 3: assemble in index order, so output does not depend on family scheduling.
+    out: list[SyntheticDocument] = []
+    for i, spec, fam, _ in prepared:
+        got = accepted.get(i)
+        if got is None:
             continue
-
-        text, d = accepted
-        stats.accepted += 1
+        text, d = got
+        model_id, revision, provider = identity[fam.family]
         # No human source, so this document gets its own group and its own split.
         group = f"grp_rand_{i}"
         out.append(SyntheticDocument(
             sample_id=f"rand_{i}", source_human_id=f"none_rand_{i}", source_group_id=group,
             label=Label.AI, text=text, split=assign_split(group),
             generator=GeneratorSpec(
-                provider="api" if fam.provider == "api" else "open_source",
-                family=fam.family, model_id=getattr(gen, "model_id", fam.model_id),
-                revision=getattr(gen, "revision", fam.revision),
+                provider="api" if provider == "api" else "open_source",
+                family=fam.family, model_id=model_id, revision=revision,
                 temperature=d.temperature, top_p=d.top_p,
                 max_new_tokens=d.max_new_tokens, seed=d.seed,
             ),
