@@ -17,7 +17,11 @@ data:
   # different accepted counts. Set this to the SMALLER arm's count, identically in every
   # arm's config, before training. Left null the comparison measures data volume as much
   # as data strategy. Fill it in from the generation stats, do not guess.
-  ai_cap: null
+  # Filled from generation, not guessed: mirrors accepted 18,856 documents and random
+  # accepted 22,713, counted from the parquet with pyarrow rather than from the log,
+  # because a log records what the generator believed and the parquet records what landed.
+  # The smaller arm sets the budget for both.
+  ai_cap: 18856
   # LENGTH MATCHING. Point both arms at the MIRROR arm's directory. The mirror arm then
   # matches itself, a no-op; the control arm is reshaped so its length distribution tracks
   # the mirror arm's. Without this the arms differ in length as well as in matching,
