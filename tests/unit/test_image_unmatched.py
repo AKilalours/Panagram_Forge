@@ -48,11 +48,26 @@ def test_captions_are_deterministic() -> None:
 
 
 def test_the_inventory_produces_many_distinct_captions() -> None:
-    """Fields moving in lockstep would give twelve combinations, not thousands."""
-    combos = {tuple(spec_for(i).as_dict()[f] for f in ("scene", "objects", "colour_palette",
-                                                       "composition", "time_of_day"))
-              for i in range(400)}
-    assert len(combos) > len(SCENES) * 4
+    """The regression.
+
+    The first version chose fields by modular strides on the index. Every field's period
+    divided the scene inventory's length, so the whole caption repeated every twelve
+    indices: twelve distinct captions for twenty thousand images, which is precisely the
+    weak control this module's docstring warns against.
+    """
+    fields = ("scene", "objects", "colour_palette", "composition", "time_of_day")
+    combos = {tuple(spec_for(i).as_dict()[f] for f in fields) for i in range(400)}
+    assert len(combos) > len(SCENES) * 4, f"only {len(combos)} distinct captions in 400 draws"
+
+
+def test_caption_variety_does_not_depend_on_inventory_sizes() -> None:
+    """A later inventory edit must not quietly reintroduce a short period.
+
+    Hash-derived selection has no arithmetic relationship between the field lengths, so
+    adding or removing a scene cannot collapse the combination count the way strides did.
+    """
+    period_probe = [spec_for(i).as_dict()["objects"] for i in range(120)]
+    assert period_probe[:12] != period_probe[12:24]
 
 
 def test_captions_describe_ordinary_scenes() -> None:

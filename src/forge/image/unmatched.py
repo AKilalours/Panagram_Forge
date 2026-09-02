@@ -32,6 +32,7 @@ identified by its geometry.
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
@@ -80,24 +81,43 @@ class UnmatchedStats(MirrorStats):
     families_used: set = field(default_factory=set)
 
 
+def _pick(sequence, index: int, field: str):
+    """Choose from `sequence` by hashing (index, field).
+
+    NOT modular arithmetic on the index. The first version used strides:
+
+        OBJECTS[(index * 5) % len(OBJECTS)]
+        PALETTES[(index * 13) % len(PALETTES)]
+
+    with a comment claiming co-prime strides would keep the fields from moving in lockstep.
+    That reasoning is wrong. A stride's period is len(sequence) // gcd(stride, len), and
+    every one of those lengths divided the scene inventory's length, so the whole caption
+    repeated every twelve indices: twelve distinct captions for twenty thousand images.
+
+    Hashing each field with its own name gives independent draws, stays deterministic, and
+    does not depend on any arithmetic relationship between the inventory sizes, so adding a
+    scene later cannot quietly reintroduce a short period.
+    """
+    digest = hashlib.sha256(f"unmatched-v1:{field}:{index}".encode()).digest()
+    return sequence[int.from_bytes(digest[:4], "big") % len(sequence)]
+
+
 def spec_for(index: int) -> Caption:
     """Deterministic caption number `index` from the inventory.
 
     Index-derived rather than random so the control arm is reproducible and so a run can be
-    resumed or extended without redrawing what it already generated. Co-prime strides keep
-    the fields from moving in lockstep, which would otherwise produce only twelve distinct
-    combinations instead of thousands.
+    resumed or extended without redrawing what it already generated.
     """
-    scene, lighting, perspective = SCENES[index % len(SCENES)]
+    scene, lighting, perspective = _pick(SCENES, index, "scene")
     return Caption(
         scene=scene,
-        objects=OBJECTS[(index * 5) % len(OBJECTS)],
-        spatial_relations=RELATIONS[(index * 7) % len(RELATIONS)],
-        composition=LAYOUTS[(index * 11) % len(LAYOUTS)],
+        objects=_pick(OBJECTS, index, "objects"),
+        spatial_relations=_pick(RELATIONS, index, "relations"),
+        composition=_pick(LAYOUTS, index, "composition"),
         lighting=lighting,
-        colour_palette=PALETTES[(index * 13) % len(PALETTES)],
+        colour_palette=_pick(PALETTES, index, "palette"),
         camera_perspective=perspective,
-        time_of_day=TIMES[(index * 17) % len(TIMES)],
+        time_of_day=_pick(TIMES, index, "time"),
         notes={"arm": "unmatched", "inventory_index": index},
     )
 
