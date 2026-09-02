@@ -81,14 +81,19 @@ def pin_revisions(
     config would then produce different data under the same dataset version. This
     resolves the current commit sha for every open-source family so the roster is fixed.
     """
+    from pathlib import Path
+
     from huggingface_hub import HfApi
 
-    from pathlib import Path
+    from forge.generation.pinning import pin_revision, unpinned_lines
 
     api = HfApi()
     conf = cfg.load(config)
-    text = Path(cfg.REPO_ROOT / config).read_text()
-    resolved = {}
+    path = Path(cfg.REPO_ROOT / config)
+    text = path.read_text()
+    resolved: dict[str, str] = {}
+    written: dict[str, str] = {}
+    unresolved: list[str] = []
     for fam in conf.get("families", []):
         if fam.get("provider") != "open_source":
             continue
@@ -97,16 +102,47 @@ def pin_revisions(
         except Exception as e:
             typer.secho(f"  {fam['family']:<10} FAILED  {fam['model_id']}: {e}", fg=typer.colors.RED)
             typer.echo("     gated model? accept its license on huggingface.co and set HF_TOKEN")
+            unresolved.append(fam["family"])
             continue
         resolved[fam["family"]] = sha
+        # Anchor on the model_id line and rewrite whatever the NEXT revision: value is.
+        #
+        # This used to be a literal str.replace of "model_id: <id>\n    revision: TODO...",
+        # which silently did nothing whenever the model_id line carried a trailing comment
+        # (the gated entries do) and could not re-pin an already-pinned roster. str.replace
+        # reports a no-op as success, so the command printed a count of API lookups and
+        # looked like it had written a file it had not touched.
+        text, n = pin_revision(text, fam["model_id"], sha)
+        if n != 1:
+            typer.secho(
+                f"  {fam['family']:<10} RESOLVED BUT NOT WRITTEN: matched {n} revision lines "
+                f"for {fam['model_id']} (expected exactly 1)",
+                fg=typer.colors.RED,
+            )
+            raise typer.Exit(code=1)
+        written[fam["family"]] = sha
         typer.echo(f"  {fam['family']:<10} {fam['model_id']:<45} {sha}")
-        text = text.replace(
-            f"model_id: {fam['model_id']}\n    revision: TODO_PIN_AT_FIRST_RUN",
-            f"model_id: {fam['model_id']}\n    revision: {sha}",
-        )
+
+    assert written.keys() == resolved.keys()
     if write:
-        Path(cfg.REPO_ROOT / config).write_text(text)
-        typer.secho(f"pinned {len(resolved)} revisions into {config}", fg=typer.colors.GREEN)
+        path.write_text(text)
+        # Report substitutions, never lookups. The count has to be derived from the
+        # mutation itself or it cannot detect a write that did not happen.
+        typer.secho(f"pinned {len(written)} revisions into {config}", fg=typer.colors.GREEN)
+        left = unpinned_lines(path.read_text())
+        if left:
+            typer.secho(
+                f"{len(left)} revision(s) still unpinned; unresolved families: "
+                f"{unresolved or 'none'}",
+                fg=typer.colors.YELLOW,
+            )
+            if not unresolved:
+                typer.secho(
+                    "no family failed to resolve, so these lines should have been "
+                    "written. This is a bug, not a gating problem.",
+                    fg=typer.colors.RED,
+                )
+                raise typer.Exit(code=1)
     else:
         typer.secho("dry run; pass --write to update the config", fg=typer.colors.YELLOW)
 
