@@ -68,7 +68,12 @@ def _matched_budget(human, ai) -> tuple[int, list[str]]:
         available = ai_cells.get(cell, 0)
         limit = int(available / share) if share else None
         if limit is not None:
-            binding.append((limit, f"{cell[0]:>5} {cell[1]:>5}w  needs {share:6.2%}  has {available:>6}"))
+            low = LENGTH_BINS[cell[1]]
+            high = LENGTH_BINS[cell[1] + 1] if cell[1] + 1 < len(LENGTH_BINS) else None
+            span = f"{low}-{high}w" if high else f"{low}+w"
+            binding.append(
+                (limit, f"{cell[0]:>5} {span:>10}  needs {share:6.2%}  has {available:>6}")
+            )
             budget = limit if budget is None else min(budget, limit)
     binding.sort()
     return (budget or 0), [line for _, line in binding[:5]]
