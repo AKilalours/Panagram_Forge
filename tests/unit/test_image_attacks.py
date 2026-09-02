@@ -36,31 +36,61 @@ from forge.image.normalize import POLICY_V1, describe, normalize_bytes  # noqa: 
 
 
 def _photo(seed: int = 3, w: int = 900, h: int = 900) -> bytes:
-    """A photo-LIKE fixture: smooth gradients plus a few large regions.
+    """A photo-like fixture: smooth global structure PLUS fine texture.
 
-    The first version was a periodic stripe pattern. Cropping twenty percent shifts the
-    phase of every stripe, so a gradient-based perceptual hash sees an unrelated image and
-    the crop attack was reported as vandalism. Photographs are not periodic at that scale:
-    they have smooth tonal structure and a few dominant regions, and those survive a crop,
-    which is exactly why a crop is an attack rather than destruction.
+    Both halves are load-bearing, and each was learned by a failing test.
 
-    The lesson generalises past this file. A synthetic fixture that is pathological for the
-    instrument under test produces a failure that looks like a bug in the code, and the
-    tempting fix is to loosen the check until the fixture passes. That would have left the
-    real suite unable to tell a crop from vandalism.
+    SMOOTH GLOBAL STRUCTURE, so a crop is still recognisably the same picture. The first
+    version was a periodic stripe pattern; cropping twenty percent shifted every stripe's
+    phase, a gradient hash saw an unrelated image, and the crop attack was reported as
+    vandalism.
+
+    FINE TEXTURE, so blur and lossy compression have something to remove. The second
+    version was a pure gradient, and a mild blur followed by a downscale to 512 produced
+    byte-identical output, so the blur attack looked like a no-op. Real photographs carry
+    sensor noise and surface detail, which is exactly what those attacks destroy.
+
+    A fixture missing either property makes a correct check look broken, and the tempting
+    fix in both cases is to weaken the check.
     """
     cx, cy = w * 0.35 + seed, h * 0.6 - seed
     data = bytearray()
     for y in range(h):
         for x in range(w):
-            # Smooth global gradient, so coarse structure is stable under cropping.
             r = (x * 200) // w + 30
             g = (y * 180) // h + 40
-            # One large soft region, the analogue of a subject against a background.
             dx, dy = (x - cx) / w, (y - cy) / h
             blob = max(0.0, 1.0 - (dx * dx + dy * dy) * 6.0)
-            b = int(40 + 180 * blob)
-            data += bytes((min(r + int(60 * blob), 255), min(g, 255), min(b, 255)))
+            b = 40 + 180 * blob
+            # Deterministic high-frequency texture, the analogue of sensor noise. Averaged
+            # away by the 8x9 downsample a perceptual hash uses, so coarse structure still
+            # dominates, but present for blur and JPEG to act on.
+            grain = ((x * 7919 + y * 104729 + seed * 31) % 61) - 30
+            data += bytes(
+                (
+                    max(0, min(255, r + int(60 * blob) + grain)),
+                    max(0, min(255, g + grain)),
+                    max(0, min(255, int(b) + grain)),
+                )
+            )
+    buf = io.BytesIO()
+    Image.frombytes("RGB", (w, h), bytes(data)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _unrelated(w: int = 900, h: int = 900) -> bytes:
+    """A genuinely different picture, for the check that vandalism is detected.
+
+    Not another _photo with a different seed: after the fixture was made photo-like, two
+    seeds differed only by a slightly shifted blob, so the recognisability check correctly
+    called them the same picture and the test that wanted them different failed. Coarse
+    structure has to actually differ.
+    """
+    data = bytearray()
+    for y in range(h):
+        for x in range(w):
+            band = 255 if ((x // 90) + (y // 90)) % 2 else 20
+            data += bytes((band, 255 - band, (band + 128) % 256))
     buf = io.BytesIO()
     Image.frombytes("RGB", (w, h), bytes(data)).save(buf, format="PNG")
     return buf.getvalue()
@@ -179,9 +209,9 @@ def test_every_attack_has_a_description() -> None:
 
 def test_vandalism_is_detected_as_such() -> None:
     """preserves_content must actually be able to say no, or it protects nothing."""
-    noise = _photo(seed=91)
-    assert not preserves_content(ORIGINAL, noise)
-    assert not preserves_content(ORIGINAL, noise, geometric=True)
+    other = _unrelated()
+    assert not preserves_content(ORIGINAL, other)
+    assert not preserves_content(ORIGINAL, other, geometric=True)
 
 
 def test_attacked_images_still_normalise_to_the_policy_shape() -> None:
