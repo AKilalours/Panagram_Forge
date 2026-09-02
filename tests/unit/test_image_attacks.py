@@ -36,18 +36,31 @@ from forge.image.normalize import POLICY_V1, describe, normalize_bytes  # noqa: 
 
 
 def _photo(seed: int = 3, w: int = 900, h: int = 900) -> bytes:
-    """Structured content, so lossy operations have something to degrade."""
-    period = 3 + (seed % 5)
+    """A photo-LIKE fixture: smooth gradients plus a few large regions.
+
+    The first version was a periodic stripe pattern. Cropping twenty percent shifts the
+    phase of every stripe, so a gradient-based perceptual hash sees an unrelated image and
+    the crop attack was reported as vandalism. Photographs are not periodic at that scale:
+    they have smooth tonal structure and a few dominant regions, and those survive a crop,
+    which is exactly why a crop is an attack rather than destruction.
+
+    The lesson generalises past this file. A synthetic fixture that is pathological for the
+    instrument under test produces a failure that looks like a bug in the code, and the
+    tempting fix is to loosen the check until the fixture passes. That would have left the
+    real suite unable to tell a crop from vandalism.
+    """
+    cx, cy = w * 0.35 + seed, h * 0.6 - seed
     data = bytearray()
     for y in range(h):
         for x in range(w):
-            data += bytes(
-                (
-                    ((x // period) * 41 + seed * 7) % 256,
-                    ((y // (period + 1)) * 23 + seed) % 256,
-                    ((x * y) // 97 + seed) % 256,
-                )
-            )
+            # Smooth global gradient, so coarse structure is stable under cropping.
+            r = (x * 200) // w + 30
+            g = (y * 180) // h + 40
+            # One large soft region, the analogue of a subject against a background.
+            dx, dy = (x - cx) / w, (y - cy) / h
+            blob = max(0.0, 1.0 - (dx * dx + dy * dy) * 6.0)
+            b = int(40 + 180 * blob)
+            data += bytes((min(r + int(60 * blob), 255), min(g, 255), min(b, 255)))
     buf = io.BytesIO()
     Image.frombytes("RGB", (w, h), bytes(data)).save(buf, format="PNG")
     return buf.getvalue()
