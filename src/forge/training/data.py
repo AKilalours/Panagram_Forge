@@ -71,7 +71,9 @@ def load_examples(
     against the `prompt_version` recorded on every generated document.
     """
     ai_root = ai_root or mirror_root
-    out: list[RawExample] = []
+    human_rows: list[RawExample] = []
+    ai_rows: list[RawExample] = []
+    mixed_rows: list[RawExample] = []
 
     if human_root:
         from forge.ingestion.writer import PARTITION_GLOB
@@ -82,10 +84,8 @@ def load_examples(
             ).to_pylist():
                 if r["split"] not in splits:
                     continue
-                out.append(RawExample(r["doc_id"], r["source_group_id"], r["split"],
-                                      r["text"], 0, _single_span(r["text"], 0), r["domain"]))
-                if limit and len(out) >= limit:
-                    return out
+                human_rows.append(RawExample(r["doc_id"], r["source_group_id"], r["split"],
+                                             r["text"], 0, _single_span(r["text"], 0), r["domain"]))
 
     if ai_root:
         seen_versions: set[str] = set()
@@ -98,11 +98,9 @@ def load_examples(
                     continue
                 g = r.get("generator") or {}
                 seen_versions.add(((r.get("mirror") or {}).get("prompt_version")) or "unknown")
-                out.append(RawExample(r["sample_id"], r["source_group_id"], r["split"],
-                                      r["text"], 1, _single_span(r["text"], 1), r["domain"],
-                                      g.get("family", "unknown"), str(g.get("released", ""))))
-                if limit and len(out) >= limit:
-                    return out
+                ai_rows.append(RawExample(r["sample_id"], r["source_group_id"], r["split"],
+                                          r["text"], 1, _single_span(r["text"], 1), r["domain"],
+                                          g.get("family", "unknown"), str(g.get("released", ""))))
 
         if expect_arm and seen_versions:
             want = ARM_PROMPT_VERSION.get(expect_arm)
@@ -121,12 +119,41 @@ def load_examples(
                     continue
                 spans = [(s["start_char"], s["end_char"], s["label"]) for s in r["spans"]]
                 ai = sum(e - s for s, e, l in spans if l != TokenLabel.HUMAN.value)
-                out.append(RawExample(r["doc_id"], r["source_group_id"], r["split"], r["text"],
-                                      int(ai / max(len(r["text"]), 1) >= 0.5), spans,
-                                      r.get("domain", "unknown")))
-                if limit and len(out) >= limit:
-                    return out
-    return out
+                mixed_rows.append(RawExample(r["doc_id"], r["source_group_id"], r["split"], r["text"],
+                                             int(ai / max(len(r["text"]), 1) >= 0.5), spans,
+                                             r.get("domain", "unknown")))
+
+    return interleave(human_rows, ai_rows, mixed_rows, limit=limit)
+
+
+def interleave(*buckets: list[RawExample], limit: int | None = None) -> list[RawExample]:
+    """Concatenate the sources, or take a limit that draws from ALL of them.
+
+    WHY. Each loader used to append to one list and return early once it had `limit`
+    rows. Humans are read first, so any limited load returned humans only: `--smoke`,
+    which is --limit 200, trained on 200 human documents and zero AI documents. The run
+    completed, reported a loss, and told you nothing, because a classifier fed one class
+    cannot fail in a way a smoke test would notice.
+
+    That is the same defect as the corpus loader's prefix truncation, in a different
+    file. The lesson worth keeping: an early return inside a source-specific loop is
+    never a subsample, it is a filter on source.
+
+    Round-robin across the buckets so a limit is a real sample of what a full run would
+    see. Unlimited loads keep the original concatenated order.
+    """
+    if limit is None:
+        return [row for bucket in buckets for row in bucket]
+    picked: list[RawExample] = []
+    index = 0
+    while len(picked) < limit and any(index < len(b) for b in buckets):
+        for bucket in buckets:
+            if index < len(bucket):
+                picked.append(bucket[index])
+                if len(picked) >= limit:
+                    break
+        index += 1
+    return picked
 
 
 def build_dataset(examples: list[RawExample], tokenizer, max_length: int = 512,
