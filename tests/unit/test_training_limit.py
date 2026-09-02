@@ -50,8 +50,11 @@ MIXED = _rows("m", 1, 100)
 def test_unlimited_load_returns_everything_in_order() -> None:
     got = interleave(HUMANS, AI, MIXED, limit=None)
     assert len(got) == 1100
-    assert got[0].doc_id == "h0"
-    assert got[-1].doc_id == "m99"
+    # Compare against the buckets themselves rather than literal ids, so a change to the
+    # fixture's naming cannot leave this assertion silently checking the wrong thing.
+    assert got[0] is HUMANS[0]
+    assert got[-1] is MIXED[-1]
+    assert [r.doc_id for r in got] == [r.doc_id for r in HUMANS + AI + MIXED]
 
 
 def test_a_limited_load_contains_both_classes() -> None:

@@ -170,7 +170,11 @@ def test_records_carry_provenance_and_a_split() -> None:
     assert record.attribution == "Author 0"
     assert record.source_url == sources[0].url
     assert record.split in {"train", "val", "test"}
-    assert record.width == 900 and record.height == 700   # the ORIGINAL dimensions
+    # The ORIGINAL dimensions, not the normalised ones. Read from the fixture rather than
+    # hardcoded, so changing the fixture cannot leave this assertion quietly wrong again.
+    original = describe(_scene(6))
+    assert (record.width, record.height) == (original["width"], original["height"])
+    assert record.width != POLICY_V1.size, "the manifest must record the source size"
     assert record.phash
 
 
