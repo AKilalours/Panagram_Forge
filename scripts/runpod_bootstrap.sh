@@ -63,6 +63,26 @@ PY
 log "verify vllm"
 python -c "import importlib.util as u;spec=u.find_spec('vllm');print('vllm installed' if spec else 'vllm NOT installed -> generation must use --backend transformers')"
 
+log "vllm / transformers compatibility"
+# vllm 0.11.0 calls tokenizer.all_special_tokens_extended, which transformers removed in
+# 4.57 when the tokenizer backend was refactored. The pair installs cleanly and then dies
+# AFTER downloading several GB of weights, on a GPU billing by the second. Pin transformers
+# below the refactor, then prove the exact call path works.
+if python -c "import importlib.util,sys;sys.exit(0 if importlib.util.find_spec('vllm') else 1)"; then
+    if ! python -c "import sys,transformers;from packaging.version import Version;sys.exit(0 if Version(transformers.__version__) < Version('4.57') else 1)"; then
+        echo "transformers is too new for this vllm; pinning to 4.56.2"
+        pip install -q -c /tmp/forge-constraints.txt "transformers==4.56.2"
+    fi
+
+    # The pod image sets HF_HUB_ENABLE_HF_TRANSFER=1, and newer huggingface_hub raises
+    # instead of falling back when the package is missing.
+    python -c "import hf_transfer" 2>/dev/null || pip install -q hf_transfer
+
+    log "prove the tokenizer path vllm actually uses"
+    # Smallest roster model: a few hundred KB of tokenizer files, no weights.
+    python -c "from vllm.transformers_utils.tokenizer import get_tokenizer; print('tokenizer ok:', type(get_tokenizer('HuggingFaceTB/SmolLM2-1.7B-Instruct')).__name__)"
+fi
+
 log "verify the package and tests"
 python -m forge.cli spec-check
 python -m pytest -q
