@@ -153,7 +153,7 @@ class VLLMGenerator:
         )
 
     def generate(self, prompts: list[str], decoding: Decoding) -> list[str]:  # pragma: no cover
-        outs = self._load().generate(prompts, self._params(decoding))
+        outs = self._load().generate(prompts, self._params(decoding), use_tqdm=False)
         return [o.outputs[0].text for o in outs]
 
     def generate_many(self, prompts: list[str], decodings: list[Decoding]) -> list[str]:  # pragma: no cover
@@ -162,7 +162,10 @@ class VLLMGenerator:
         if not prompts:
             return []
         params = [self._params(d) for d in decodings]
-        outs = self._load().generate(prompts, params)
+        # use_tqdm=False: vLLM's per-request progress bar rewrites the line thousands of
+        # times, which is unreadable in a tee'd log and makes the log ungreppable. The
+        # runner prints its own batch-level progress instead.
+        outs = self._load().generate(prompts, params, use_tqdm=False)
         return [o.outputs[0].text for o in outs]
 
     def close(self) -> None:  # pragma: no cover - needs a GPU

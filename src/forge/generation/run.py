@@ -339,9 +339,37 @@ def read_humans(lake_root: str | Path, limit: int | None = None) -> list[HumanRe
         t = pq.read_table(f, columns=["doc_id", "source_group_id", "text", "domain", "split"])
         for row in t.to_pylist():
             refs.append(HumanRef(row["doc_id"], row["source_group_id"], row["text"], row["domain"], Split(row["split"])))
-            if limit is not None and len(refs) >= limit:
-                return refs
-    return refs
+    if limit is None or limit >= len(refs):
+        return refs
+    return subsample(refs, limit)
+
+
+def subsample(refs: list[HumanRef], limit: int) -> list[HumanRef]:
+    """Take `limit` documents from across the WHOLE corpus, deterministically.
+
+    This used to stop reading as soon as it had enough, which returns a PREFIX of the
+    parquet files in sorted order. Those files are partitioned by source and split, so a
+    limited run silently drew every document from one partition: a 200-document smoke run
+    produced 200 test-split documents and zero train. Running the real experiment at half
+    scale that way would have produced a corpus with the wrong split proportions and the
+    wrong source mix, and nothing would have complained.
+
+    Rank by a salted hash of doc_id instead. That is uniform over sources and splits,
+    stable across runs and machines, and independent of file order, so the same limit
+    always selects the same documents. Nested limits are also consistent: the 1000 chosen
+    at limit=1000 are a subset of the 2000 chosen at limit=2000, which makes a probe a
+    genuine preview of the run that follows it.
+
+    Document order is then restored to corpus order, so output ordering does not depend
+    on the limit.
+    """
+    import hashlib
+
+    def rank(ref: HumanRef) -> str:
+        return hashlib.sha256(f"subsample:{ref.doc_id}".encode()).hexdigest()
+
+    chosen = {r.doc_id for r in sorted(refs, key=rank)[:limit]}
+    return [r for r in refs if r.doc_id in chosen]
 
 
 DEFAULT_GENERATORS_CONFIG = "configs/generation/generators.yaml"
