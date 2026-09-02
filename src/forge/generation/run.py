@@ -229,9 +229,39 @@ def read_humans(lake_root: str | Path, limit: int | None = None) -> list[HumanRe
     return refs
 
 
+DEFAULT_GENERATORS_CONFIG = "configs/generation/generators.yaml"
+
+
+def resolve_generators_config(mirror_cfg: dict) -> str:
+    """Which generator roster does this mirror config name?
+
+    This path used to be hardcoded to the full-scale roster, so running the
+    minimal mirror config silently generated from a DIFFERENT set of model
+    families than the one it declared, at unpinned revisions. Nothing errored;
+    the run was only stopped further downstream by require_pinned_revision,
+    which exists for a different reason and happened to catch it.
+
+    A config key that the code never reads is indistinguishable from a typo.
+    Read it here, and fail loudly if it names a file that does not exist rather
+    than falling back to the default, because a silent fallback reintroduces
+    exactly the bug this replaces.
+    """
+    named = mirror_cfg.get("generators_config")
+    if named is None:
+        return DEFAULT_GENERATORS_CONFIG
+    if not isinstance(named, str) or not named.strip():
+        raise ValueError(f"generators_config must be a non-empty path, got {named!r}")
+    if not (REPO_ROOT / named).is_file():
+        raise FileNotFoundError(
+            f"mirror config names generators_config={named!r}, which does not exist. "
+            "Fix the path rather than letting it fall back to the default roster."
+        )
+    return named
+
+
 def run(config_path: str, humans_root: str | Path, out_root: str | Path, backend: str = "fake", limit: int | None = None) -> MirrorResult:
     mirror_cfg = load(config_path)
-    generators_cfg = load("configs/generation/generators.yaml")
+    generators_cfg = load(resolve_generators_config(mirror_cfg))
     humans = read_humans(humans_root, limit=limit)
     result = generate_mirrors(humans, generators_cfg, mirror_cfg, backend=backend)
     result.partitions = write_mirrors(result.docs, out_root)
