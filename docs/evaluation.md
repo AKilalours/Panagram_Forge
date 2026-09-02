@@ -49,6 +49,33 @@ that arm B's data passed a stricter filter than arm A's. If arm B wins, this is 
 alternative explanation a reader will propose, and it cannot be ruled out from these two
 runs alone. Ruling it out needs an arm B variant generated under the looser thresholds.
 
+**Length overshoot dominated mirror rejection, and it was structural.** The first real
+run accepted 18,856 of 30,000 mirrors, a 31.5% rate over 59,920 attempts. The reasons:
+
+| reason | count |
+|---|---|
+| too_long | 33,912 |
+| too_short | 6,070 |
+| assistant_preamble | 999 |
+| empty | 83 |
+
+Length overshoot is 85% of all rejections and the cause is structural rather than random:
+generation used one `max_new_tokens` of 640 for every document, regardless of its target
+length. A source with a 250-token target could never be matched, because the model writes
+to the cap and lands at a ratio of about 2.6 against a ceiling of 1.6. That also explains
+why retries recovered so little: the seed changes between attempts, the length ceiling does
+not. Attempt 1 recovered 632 of 3,055 failures on the first family.
+
+Consequence, and the reason the arms are capped by distribution rather than by count: the
+mirrors that survive skew long, while the control arm draws its target lengths from the
+whole human corpus and does not skew. Capping both arms to an equal count alone would leave
+them differing in length distribution as well as in matching, and a detector can learn
+length. Both arms are therefore capped with `cap_documents_matching`, which selects the
+control arm's documents so its length profile tracks the mirror arm's.
+
+Fix for the next run, not applied here: set `max_new_tokens` per document from its target
+rather than globally. Applying it now would mean regenerating both arms.
+
 **Selection pressure from rejection.** First-pass rejection on the mirror arm ran near 40%
 for the first generator family. Documents are retried up to twice with different seeds, so
 final acceptance is higher, but the accepted set is selected rather than sampled: it

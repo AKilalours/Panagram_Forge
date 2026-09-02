@@ -163,6 +163,25 @@ def validate_config(cfg: dict) -> str:
     return arm
 
 
+def _reference_arm(dcfg: dict):
+    """Load the arm whose length distribution this arm should be capped to match.
+
+    Generation rejected 85% of mirrors for length overshoot, and the survivors skew long,
+    while the control arm's lengths track the human corpus. Capping both arms to the same
+    COUNT would still leave them differing in length distribution, which a detector can
+    learn, so a win for either arm would have an obvious alternative explanation.
+
+    Set data.ai_reference to the mirror arm's directory in BOTH configs. The mirror arm
+    then matches itself, which is a no-op, and the control arm is reshaped to match it.
+    """
+    root = dcfg.get("ai_reference")
+    if not root:
+        return None
+    from forge.training.data import load_examples
+
+    return load_examples(ai_root=root)
+
+
 def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> dict:
     cfg_early = load(config) if isinstance(config, str) else config
     validate_config(cfg_early)
@@ -200,6 +219,7 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
         human_root=paths.get("human"), ai_root=paths.get("ai") or paths.get("mirror"),
         mixed_root=paths.get("mixed"), limit=limit, expect_arm=arm,
         ai_cap=dcfg.get("ai_cap"),
+        ai_reference=_reference_arm(dcfg),
     )
     if not examples:
         raise RuntimeError(

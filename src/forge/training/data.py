@@ -57,6 +57,7 @@ def load_examples(
     limit: int | None = None,
     expect_arm: str | None = None,
     ai_cap: int | None = None,
+    ai_reference: list[RawExample] | None = None,
     mirror_root: str | Path | None = None,   # deprecated alias
 ) -> list[RawExample]:
     """Load one arm's training data.
@@ -133,11 +134,108 @@ def load_examples(
                                              r.get("domain", "unknown")))
 
     if ai_cap is not None and len(ai_rows) > ai_cap:
-        ai_rows = cap_documents(ai_rows, ai_cap)
+        if ai_reference is not None:
+            # Match the reference arm's LENGTH distribution, not just its count. See
+            # cap_documents_matching for why an equal count alone leaves a confound.
+            ai_rows = cap_documents_matching(ai_rows, ai_reference, ai_cap)
+        else:
+            ai_rows = cap_documents(ai_rows, ai_cap)
 
     if limit is None:
         return human_rows + ai_rows + mixed_rows
     return interleave(*_by_source_and_split(human_rows, ai_rows, mixed_rows), limit=limit)
+
+
+# Word-count bins for length matching. Fixed rather than derived from the data, so two
+# arms capped on different days land in the same bins and a cap is reproducible.
+LENGTH_BINS = (0, 150, 250, 350, 500, 750, 1_100)
+
+
+def length_bin(text: str) -> int:
+    words = len(text.split())
+    for index in range(len(LENGTH_BINS) - 1, -1, -1):
+        if words >= LENGTH_BINS[index]:
+            return index
+    return 0
+
+
+def _rank(row: RawExample) -> str:
+    import hashlib
+
+    return hashlib.sha256(f"cap:{row.doc_id}".encode()).hexdigest()
+
+
+def cap_documents_matching(
+    rows: list[RawExample], reference: list[RawExample], cap: int
+) -> list[RawExample]:
+    """Cap to `cap` documents whose LENGTH distribution tracks `reference`.
+
+    WHY THIS EXISTS, and it is not a nicety.
+
+    The mirror arm's validator rejects a generation whose length ratio to its source falls
+    outside [0.6, 1.6]. Generation used one max_new_tokens for every document, so a short
+    source could never be matched: the model wrote to the cap and overshot. Length
+    overshoot was 85% of all rejections, and the documents that survived skew long.
+
+    The control arm draws its target lengths from the whole human corpus, so it does not
+    skew. Capping both arms to the same COUNT therefore leaves them differing in length
+    distribution as well as in matching, and a detector can learn length. A win for either
+    arm would then have an obvious alternative explanation.
+
+    Matching the distribution at cap time removes that confound without regenerating
+    anything. Selection stays deterministic: within each (split, length bin) cell, documents
+    are ranked by a salted hash of their id.
+
+    Where a cell in `rows` cannot supply its full share, the shortfall is redistributed
+    across the remaining cells rather than silently shrinking the result, so the returned
+    count is exact and the arms stay equal in size as well as in shape.
+    """
+    if cap >= len(rows):
+        return list(rows)
+
+    def cell(row: RawExample) -> tuple[str, int]:
+        return (row.split, length_bin(row.text))
+
+    reference_counts: dict[tuple[str, int], int] = {}
+    for row in reference:
+        reference_counts[cell(row)] = reference_counts.get(cell(row), 0) + 1
+    total_reference = sum(reference_counts.values()) or 1
+
+    available: dict[tuple[str, int], list[RawExample]] = {}
+    for row in rows:
+        available.setdefault(cell(row), []).append(row)
+    for key in available:
+        available[key].sort(key=_rank)
+
+    # First pass: each cell's proportional share, bounded by what it can supply.
+    taken: dict[tuple[str, int], int] = {}
+    for key, count in reference_counts.items():
+        want = int(cap * count / total_reference)
+        taken[key] = min(want, len(available.get(key, [])))
+
+    # Second pass: hand the shortfall to whichever cells still have documents, largest
+    # first, so the total is exact. Without this the arms would differ in size, which is
+    # the very thing the cap exists to prevent.
+    remaining = cap - sum(taken.values())
+    while remaining > 0:
+        candidates = [
+            key for key in available if len(available[key]) > taken.get(key, 0)
+        ]
+        if not candidates:
+            break
+        candidates.sort(key=lambda k: len(available[k]) - taken.get(k, 0), reverse=True)
+        for key in candidates:
+            if remaining == 0:
+                break
+            taken[key] = taken.get(key, 0) + 1
+            remaining -= 1
+
+    keep = {
+        row.doc_id
+        for key, count in taken.items()
+        for row in available.get(key, [])[:count]
+    }
+    return [row for row in rows if row.doc_id in keep]
 
 
 def cap_documents(rows: list[RawExample], cap: int) -> list[RawExample]:

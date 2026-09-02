@@ -18,6 +18,11 @@ data:
   # arm's config, before training. Left null the comparison measures data volume as much
   # as data strategy. Fill it in from the generation stats, do not guess.
   ai_cap: null
+  # LENGTH MATCHING. Point both arms at the MIRROR arm's directory. The mirror arm then
+  # matches itself, a no-op; the control arm is reshaped so its length distribution tracks
+  # the mirror arm's. Without this the arms differ in length as well as in matching,
+  # because 85% of mirror rejections were length overshoot and the survivors skew long.
+  ai_reference: data/silver/mirrors
   arm: mirror              # verified against prompt_version at load
 
 training:
