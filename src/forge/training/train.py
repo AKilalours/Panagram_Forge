@@ -57,6 +57,60 @@ def _code_commit() -> str:
         return "unknown"
 
 
+def enable_gradient_checkpointing(encoder) -> bool:
+    """Turn on gradient checkpointing, NON-REENTRANT. Returns whether it was enabled.
+
+    THE BUG THIS CAME FROM. The first minimal smoke run died on its first backward pass:
+
+        RuntimeError: Trying to backward through the graph a second time (or directly
+        access saved tensors after they have already been freed)
+
+    raised from inside torch/utils/checkpoint.py's own backward, which is the tell.
+
+    WHY, isolated to a single config field rather than guessed at.
+    `gradient_checkpointing_enable()` defaults to REENTRANT checkpointing, which recomputes
+    each block during backward and assumes the block is a closed function of its inputs.
+    DeBERTa-v2's disentangled attention needs the relative position embeddings, and the
+    encoder computes those ONCE, outside the per-layer blocks, then hands the same tensor to
+    every layer. deberta-v3-base sets norm_rel_ebd="layer_norm", so that tensor is the OUTPUT
+    OF A LAYERNORM and carries an autograd graph living outside the checkpointed blocks. The
+    first layer's backward frees it; the next layer's recomputation walks it again. Hence
+    "a second time".
+
+    Set norm_rel_ebd="none" and the same tensor is a leaf parameter with no graph behind it,
+    and reentrant checkpointing runs cleanly. That one field is the entire difference, which
+    is why the crash appeared on the real backbone and on no smaller stand-in.
+    tests/unit/test_gradient_checkpointing.py reproduces both sides.
+
+    Non-reentrant checkpointing tracks tensors that come from outside the block, so the
+    shared embedding is handled correctly.
+
+    This could not have been caught by any test that avoids a GPU-shaped model, and it cost
+    a model download plus a few minutes rather than a training run, which is the entire
+    argument for --smoke existing.
+
+    Returns False rather than raising when the encoder does not support checkpointing at
+    all, because a missing memory optimisation is not a reason to refuse to train. It is
+    logged by the caller.
+    """
+    if not hasattr(encoder, "gradient_checkpointing_enable"):
+        return False
+    try:
+        encoder.gradient_checkpointing_enable(
+            gradient_checkpointing_kwargs={"use_reentrant": False}
+        )
+    except TypeError:
+        # transformers older than 4.35 has no kwargs passthrough. Enabling reentrant
+        # checkpointing on DeBERTa-v2 would fail on the first backward, so refuse loudly
+        # instead of enabling something known to be broken.
+        raise RuntimeError(
+            "this transformers version cannot select non-reentrant gradient checkpointing, "
+            "and reentrant checkpointing crashes on DeBERTa-v2's shared relative position "
+            "embeddings. Upgrade transformers, or set gradient_checkpointing: false."
+        ) from None
+    return True
+
+
 def save_checkpoint(path, model, optimizer, scheduler, scaler, state: TrainState) -> None:
     import torch
 
@@ -282,8 +336,8 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
         )
     scaler = torch.amp.GradScaler("cuda", enabled=(precision == "fp16" and device == "cuda"))
 
-    if tcfg.get("gradient_checkpointing") and hasattr(model.encoder, "gradient_checkpointing_enable"):
-        model.encoder.gradient_checkpointing_enable()
+    if tcfg.get("gradient_checkpointing"):
+        enable_gradient_checkpointing(model.encoder)
 
     state = TrainState(dataset_version=dcfg.get("dataset_version", ""), code_commit=_code_commit())
     if resume:
