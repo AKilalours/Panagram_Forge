@@ -64,6 +64,25 @@ class MirrorResult:
     partitions: dict[str, int] = field(default_factory=dict)
 
 
+# How many prompts to hand the backend at once.
+#
+# vLLM schedules internally, so this is not the batch size the GPU sees; it bounds how
+# much output is held in Python at a time and gives the run a progress signal. Too small
+# and the engine idles between calls, too large and a crash loses more work.
+GENERATION_BATCH = 512
+
+
+@dataclass
+class _Work:
+    """One document's worth of prepared, model-free work."""
+
+    human: HumanRef
+    attrs: object
+    spec: FamilySpec
+    decoding: Decoding
+    prompt: str
+
+
 def build_generator(spec: FamilySpec, backend: str):
     if backend == "fake":
         return FakeGenerator(family=spec.family, model_id=spec.model_id, revision="fake")
@@ -101,40 +120,115 @@ def generate_mirrors(
     hasher = MinHash()
     stats = ValidationStats()
     extraction_failures = 0
-    cache: dict[str, object] = {}
     used_families: set[str] = set()
-    out: list[SyntheticDocument] = []
 
+    # PASS 1. Extraction, family assignment, decoding assignment and prompt rendering are
+    # pure CPU and need no model loaded. Doing them all first is what lets pass 2 hold
+    # exactly one engine in memory at a time.
+    work: list[_Work] = []
     for human in humans:
         try:
             attrs = extractor.extract(human.text)
         except VerbatimCopyError:
             extraction_failures += 1
             continue
-
         spec = assign_family(human.doc_id, families)
         used_families.add(spec.family)
-        gen = cache.setdefault(spec.family, build_generator(spec, backend))
-        decoding: Decoding = assign_decoding(human.doc_id, grid)
-        prompt = render_prompt(attrs, template)
+        work.append(
+            _Work(
+                human=human,
+                attrs=attrs,
+                spec=spec,
+                decoding=assign_decoding(human.doc_id, grid),
+                prompt=render_prompt(attrs, template),
+            )
+        )
 
-        accepted = None
-        for attempt in range(policy.max_retries + 1):
-            # Vary the seed per attempt, otherwise a deterministic backend returns the
-            # identical rejected text and the retries are pure waste.
-            d = Decoding(decoding.temperature, decoding.top_p, decoding.max_new_tokens,
-                         (decoding.seed or 0) + attempt)
-            text = strip_wrapper(gen.generate([prompt + ("" if attempt == 0 else " ")], d)[0])
-            ok, reason = validate(text, human.text, attrs, policy, _hasher=hasher)
-            if ok:
-                accepted = (text, d)
-                break
-            stats.reject(reason)
-        if accepted is None:
+    by_family: dict[str, list[_Work]] = {}
+    for w in work:
+        by_family.setdefault(w.spec.family, []).append(w)
+
+    # PASS 2. One family at a time, in large batches, releasing before the next.
+    #
+    # This replaces a loop that walked documents in order, kept a generator per family in
+    # a cache, and called generate([single_prompt]) once per document. That shape had two
+    # defects that only appear on real hardware:
+    #
+    #   1. Documents are assigned to families round-robin, so the cache held every
+    #      family's engine at once. A vLLM engine reserves ~90% of the card at startup, so
+    #      the second engine found 1 GiB free and the run died with "Free memory on device
+    #      (1.03/23.53 GiB) ... is less than desired GPU memory utilization".
+    #   2. One prompt per call never engages continuous batching, which is the only reason
+    #      vLLM is used here. At roughly 8 seconds per document, 60k documents is over 130
+    #      hours: not slow, infeasible.
+    #
+    # Grouping by family fixes both at once. Assignment is unchanged, so which family
+    # generates which document is byte-identical to before; only the order of work moves.
+    accepted: dict[str, tuple[str, Decoding]] = {}
+    identity: dict[str, tuple[str, str, str]] = {}
+    for family in sorted(by_family):
+        items = by_family[family]
+        gen = build_generator(items[0].spec, backend)
+        # Capture identity BEFORE close(), which drops the engine the attributes hang off.
+        identity[family] = (
+            getattr(gen, "model_id", items[0].spec.model_id),
+            getattr(gen, "revision", items[0].spec.revision),
+            items[0].spec.provider,
+        )
+        print(f"[mirror] family={family} documents={len(items)} backend={backend}", flush=True)
+        try:
+            pending = items
+            for attempt in range(policy.max_retries + 1):
+                if not pending:
+                    break
+                # Vary the seed per attempt, otherwise a deterministic backend returns the
+                # identical rejected text and the retries are pure waste.
+                decs = [
+                    Decoding(
+                        w.decoding.temperature,
+                        w.decoding.top_p,
+                        w.decoding.max_new_tokens,
+                        (w.decoding.seed or 0) + attempt,
+                    )
+                    for w in pending
+                ]
+                prompts = [w.prompt + (" " * attempt) for w in pending]
+                texts: list[str] = []
+                for i in range(0, len(prompts), GENERATION_BATCH):
+                    texts.extend(
+                        gen.generate_many(
+                            prompts[i : i + GENERATION_BATCH], decs[i : i + GENERATION_BATCH]
+                        )
+                    )
+                    done = min(i + GENERATION_BATCH, len(prompts))
+                    print(
+                        f"[mirror] family={family} attempt={attempt} {done}/{len(prompts)}",
+                        flush=True,
+                    )
+                still: list[_Work] = []
+                for w, d, raw in zip(pending, decs, texts):
+                    text = strip_wrapper(raw)
+                    ok, reason = validate(text, w.human.text, w.attrs, policy, _hasher=hasher)
+                    if ok:
+                        accepted[w.human.doc_id] = (text, d)
+                        stats.accepted += 1
+                    else:
+                        stats.reject(reason)
+                        still.append(w)
+                pending = still
+        finally:
+            gen.close()
+
+    # PASS 3. Assemble in the humans' original order, so the parquet output does not
+    # depend on which family happened to be processed first.
+    out: list[SyntheticDocument] = []
+    for w in work:
+        got = accepted.get(w.human.doc_id)
+        if got is None:
             continue
-
-        text, d = accepted
-        stats.accepted += 1
+        text, d = got
+        model_id, revision, provider = identity[w.spec.family]
+        human, attrs = w.human, w.attrs
         out.append(
             SyntheticDocument(
                 sample_id=f"forge_{human.doc_id}",
@@ -144,10 +238,10 @@ def generate_mirrors(
                 split=human.split,
                 text=text,
                 generator=GeneratorSpec(
-                    provider="api" if spec.provider == "api" else ("open_source" if backend != "fake" else "open_source"),
-                    family=spec.family,
-                    model_id=getattr(gen, "model_id", spec.model_id),
-                    revision=getattr(gen, "revision", spec.revision),
+                    provider="api" if provider == "api" else "open_source",
+                    family=w.spec.family,
+                    model_id=model_id,
+                    revision=revision,
                     temperature=d.temperature,
                     top_p=d.top_p,
                     max_new_tokens=d.max_new_tokens,

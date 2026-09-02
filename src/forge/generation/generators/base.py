@@ -55,6 +55,24 @@ class Generator(Protocol):
 
     def generate(self, prompts: list[str], decoding: Decoding) -> list[str]: ...
 
+    def generate_many(self, prompts: list[str], decodings: list[Decoding]) -> list[str]:
+        """Generate one completion per prompt, each with its OWN decoding parameters.
+
+        WHY THIS EXISTS. The runner used to call generate([one_prompt], d) per document.
+        That is a correct but unusable way to drive vLLM: a single 640-token completion
+        from a 3B model decodes at roughly 60-100 tok/s, about 8 seconds per document, so
+        60k documents would take over 130 hours. Continuous batching is the entire reason
+        vLLM is on the generation side at all, and one-request-at-a-time never engages it.
+
+        Decodings are per-prompt rather than shared because assign_decoding derives a
+        distinct seed from each document id, so a batch cannot share one SamplingParams.
+        """
+        ...
+
+    def close(self) -> None:
+        """Release whatever the backend is holding. Must be safe to call twice."""
+        ...
+
 
 # How much context to reserve per request.
 #
@@ -123,18 +141,63 @@ class VLLMGenerator:
             )
         return self._llm
 
-    def generate(self, prompts: list[str], decoding: Decoding) -> list[str]:  # pragma: no cover
+    def _params(self, decoding: Decoding):  # pragma: no cover - needs vllm
         from vllm import SamplingParams
 
         self._check_fits(decoding)
-        params = SamplingParams(
+        return SamplingParams(
             temperature=decoding.temperature,
             top_p=decoding.top_p,
             max_tokens=decoding.max_new_tokens,
             seed=decoding.seed,
         )
+
+    def generate(self, prompts: list[str], decoding: Decoding) -> list[str]:  # pragma: no cover
+        outs = self._load().generate(prompts, self._params(decoding))
+        return [o.outputs[0].text for o in outs]
+
+    def generate_many(self, prompts: list[str], decodings: list[Decoding]) -> list[str]:  # pragma: no cover
+        if len(prompts) != len(decodings):
+            raise ValueError(f"{len(prompts)} prompts but {len(decodings)} decodings")
+        if not prompts:
+            return []
+        params = [self._params(d) for d in decodings]
         outs = self._load().generate(prompts, params)
         return [o.outputs[0].text for o in outs]
+
+    def close(self) -> None:  # pragma: no cover - needs a GPU
+        """Tear the engine down and give the GPU memory back.
+
+        A vLLM engine reserves gpu_memory_utilization (0.9 by default) of the card at
+        startup and holds it for its lifetime. The runner used to keep one engine per
+        family alive simultaneously, so the second family's engine found 1 GiB free and
+        refused to start. Dropping the reference is not enough; the allocator caches
+        blocks, so the cache has to be emptied explicitly.
+        """
+        if self._llm is None:
+            return
+        llm, self._llm = self._llm, None
+        try:
+            from vllm.distributed.parallel_state import (
+                destroy_distributed_environment,
+                destroy_model_parallel,
+            )
+
+            destroy_model_parallel()
+            destroy_distributed_environment()
+        except Exception:
+            # Best effort. Version-dependent, and never a reason to fail a run.
+            pass
+        del llm
+        import gc
+
+        gc.collect()
+        try:
+            import torch
+
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 
 class TransformersGenerator:
@@ -168,6 +231,15 @@ class TransformersGenerator:
         )
         return [o[0]["generated_text"] for o in outs]
 
+    def generate_many(self, prompts: list[str], decodings: list[Decoding]) -> list[str]:  # pragma: no cover
+        """No continuous batching here, so run them one at a time and keep the contract."""
+        if len(prompts) != len(decodings):
+            raise ValueError(f"{len(prompts)} prompts but {len(decodings)} decodings")
+        return [self.generate([p], d)[0] for p, d in zip(prompts, decodings)]
+
+    def close(self) -> None:  # pragma: no cover
+        self._pipe = None
+
 
 class APIGenerator:
     """The held-out frontier family. Records the served model string per request, because
@@ -181,6 +253,12 @@ class APIGenerator:
 
     def generate(self, prompts: list[str], decoding: Decoding) -> list[str]:  # pragma: no cover
         raise NotImplementedError("Phase 5: wire the held-out API family")
+
+    def generate_many(self, prompts: list[str], decodings: list[Decoding]) -> list[str]:  # pragma: no cover
+        raise NotImplementedError("Phase 5: wire the held-out API family")
+
+    def close(self) -> None:  # pragma: no cover
+        return None
 
 
 class FakeGenerator:
@@ -226,6 +304,15 @@ class FakeGenerator:
             paras = [" ".join(words[i : i + per_para]) for i in range(0, len(words), per_para)]
             out.append("\n\n".join(paras))
         return out
+
+    def generate_many(self, prompts: list[str], decodings: list[Decoding]) -> list[str]:
+        """Deterministic stand-in: output depends only on the prompt, so batching is trivial."""
+        if len(prompts) != len(decodings):
+            raise ValueError(f"{len(prompts)} prompts but {len(decodings)} decodings")
+        return self.generate(prompts, decodings[0]) if prompts else []
+
+    def close(self) -> None:
+        return None
 
 
 _TARGET_RE = None
