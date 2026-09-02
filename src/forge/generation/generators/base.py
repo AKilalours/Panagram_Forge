@@ -56,15 +56,60 @@ class Generator(Protocol):
     def generate(self, prompts: list[str], decoding: Decoding) -> list[str]: ...
 
 
+# How much context to reserve per request.
+#
+# vLLM sizes its KV cache from the model's ADVERTISED max_position_embeddings unless told
+# otherwise. Phi-3.5-mini advertises 131072, which needs 48 GiB of KV cache; a 24 GB card
+# has about 13 GiB free after weights, so the engine refuses to start:
+#
+#   ValueError: To serve at least one request with the model's max seq len (131072),
+#   48.01 GiB KV cache is needed, which is larger than the available KV cache memory
+#
+# Mirrors never need that. A mirror prompt is the extracted attributes plus instructions,
+# a few hundred tokens, and generation is capped by Decoding.max_new_tokens (640 in the
+# minimal config). 4096 leaves generous headroom.
+#
+# This is not only a fix for the crash. Reserving 131k of context on a model that also
+# fits would still cost throughput, because every block held for a context we never use
+# is a block unavailable for batching other requests.
+DEFAULT_MAX_MODEL_LEN = 4096
+
+
+class ContextTooSmallError(ValueError):
+    pass
+
+
 class VLLMGenerator:
     """Offline batch generation for open-weight families."""
 
-    def __init__(self, family: str, model_id: str, revision: str, tensor_parallel_size: int = 1) -> None:
+    def __init__(
+        self,
+        family: str,
+        model_id: str,
+        revision: str,
+        tensor_parallel_size: int = 1,
+        max_model_len: int = DEFAULT_MAX_MODEL_LEN,
+    ) -> None:
         self.family = family
         self.model_id = model_id
         self.revision = require_pinned_revision(family, revision)
         self.tensor_parallel_size = tensor_parallel_size
+        self.max_model_len = max_model_len
         self._llm = None
+
+    def _check_fits(self, decoding: Decoding) -> None:
+        """Refuse a decoding whose output alone cannot fit the reserved context.
+
+        Without this, asking for more new tokens than max_model_len silently truncates
+        every generation, and the mirror validator would then reject them all as
+        length-ratio failures: a confusing symptom two layers from its cause.
+        """
+        if decoding.max_new_tokens >= self.max_model_len:
+            raise ContextTooSmallError(
+                f"max_new_tokens={decoding.max_new_tokens} does not fit in "
+                f"max_model_len={self.max_model_len} for family {self.family!r}. Raise "
+                "max_model_len or lower max_new_tokens."
+            )
 
     def _load(self):  # pragma: no cover - needs a GPU
         if self._llm is None:
@@ -74,12 +119,14 @@ class VLLMGenerator:
                 model=self.model_id,
                 revision=self.revision,
                 tensor_parallel_size=self.tensor_parallel_size,
+                max_model_len=self.max_model_len,
             )
         return self._llm
 
     def generate(self, prompts: list[str], decoding: Decoding) -> list[str]:  # pragma: no cover
         from vllm import SamplingParams
 
+        self._check_fits(decoding)
         params = SamplingParams(
             temperature=decoding.temperature,
             top_p=decoding.top_p,
