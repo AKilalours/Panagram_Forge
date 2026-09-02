@@ -40,6 +40,28 @@ def test_a_complete_caption_validates() -> None:
     validate(_caption())
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a quiet kitchen interior",
+        "soft window light from the left",
+        "warm neutrals with a blue accent",
+        "slightly above eye level, 35mm equivalent",
+        "two people seated at a table",
+        "mid morning",
+    ],
+)
+def test_ordinary_prose_is_accepted(value: str) -> None:
+    """The counterpart every rejection rule needs.
+
+    The proper-noun check works by capitalisation and was once compiled with IGNORECASE,
+    which made it match any two lowercase words, so it rejected every caption ever written.
+    A check that fires on everything is as useless as one that fires on nothing, and only a
+    test of the ACCEPTING side catches that.
+    """
+    validate(_caption(scene=value, objects=value, lighting=value))
+
+
 @pytest.mark.parametrize("missing", FIELDS)
 def test_every_field_is_required(missing: str) -> None:
     """A blank field is worse than a missing one: matching quietly stops on that axis."""
@@ -47,9 +69,17 @@ def test_every_field_is_required(missing: str) -> None:
         validate(_caption(**{missing: "   "}))
 
 
-def test_identifying_names_are_rejected() -> None:
+@pytest.mark.parametrize(
+    "value",
+    [
+        "Jane Doe standing in a kitchen",
+        "shot in Golden Gate park",
+        "a Coca Cola bottle on the table",
+    ],
+)
+def test_identifying_names_are_rejected(value: str) -> None:
     with pytest.raises(CaptionRejected, match="identifying"):
-        validate(_caption(scene="Jane Doe standing in a kitchen"))
+        validate(_caption(scene=value))
 
 
 def test_urls_are_rejected() -> None:

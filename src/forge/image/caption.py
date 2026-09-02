@@ -41,12 +41,31 @@ MAX_FIELD_CHARS = 400
 # A caption that names a person, a place or a brand pulls the generator toward reproducing
 # a specific real image, which is contamination rather than matching, and it also drags
 # identifiable information into a file FORGE publishes.
-_IDENTIFYING = re.compile(
-    r"\b(?:https?://|www\.)\S+"                    # URLs
-    r"|\b[A-Z][a-z]+ [A-Z][a-z]+\b"                # Capitalised Full Names
-    r"|\b(?:copyright|\(c\)|©)\b",
+#
+# TWO PATTERNS, NOT ONE, AND THE SPLIT IS THE WHOLE POINT.
+#
+# The proper-noun check works by CAPITALISATION. It was originally folded into a single
+# pattern compiled with re.IGNORECASE, which made "[A-Z][a-z]+ [A-Z][a-z]+" match any two
+# lowercase words: "a quiet kitchen" was read as a name and every caption ever written was
+# rejected. A check that fires on everything is exactly as useless as one that fires on
+# nothing, and both report confidently.
+#
+# So: case-insensitive for the things that are case-insensitive, case-SENSITIVE for the
+# thing whose entire meaning is case.
+_IDENTIFYING_ANY_CASE = re.compile(
+    r"\b(?:https?://|www\.)\S+"          # URLs
+    r"|\b(?:copyright|\(c\))\b"          # copyright markers
+    r"|©",
     re.IGNORECASE,
 )
+
+# Two consecutive Capitalised words: "Jane Doe", "Golden Gate", "Coca Cola". Deliberately
+# blunt. A caption is machine-written prose and has no legitimate reason to contain one.
+_PROPER_NOUN = re.compile(r"\b[A-Z][a-z]+ [A-Z][a-z]+\b")
+
+
+def _identifying(value: str) -> bool:
+    return bool(_IDENTIFYING_ANY_CASE.search(value) or _PROPER_NOUN.search(value))
 
 
 class CaptionRejected(ValueError):
@@ -85,7 +104,7 @@ def validate(caption: Caption) -> None:
             )
         if len(value) > MAX_FIELD_CHARS:
             raise CaptionRejected(f"field {name!r} is {len(value)} chars, over {MAX_FIELD_CHARS}")
-        if _IDENTIFYING.search(value):
+        if _identifying(value):
             raise CaptionRejected(
                 f"field {name!r} contains identifying text: {value[:80]!r}. Named people, "
                 "places and URLs pull the generator toward reproducing a specific real "
