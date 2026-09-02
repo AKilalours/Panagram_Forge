@@ -75,25 +75,58 @@ def test_metadata_is_stripped() -> None:
     assert describe(normalize_bytes(buf.getvalue()))["has_exif"] is False
 
 
+def _banded(size: int = 400, band: int = 100) -> Image.Image:
+    """Square, black, with a red band along the TOP edge."""
+    img = Image.new("RGB", (size, size), (0, 0, 0))
+    img.paste(Image.new("RGB", (size, band), (255, 0, 0)), (0, 0))
+    return img
+
+
+def _edge(raw: bytes, where: str) -> tuple[int, int, int]:
+    """Mean colour of one edge strip of a normalised image."""
+    img = Image.open(io.BytesIO(raw))
+    w, h = img.size
+    box = {
+        "top": (0, 0, w, h // 8),
+        "bottom": (0, h - h // 8, w, h),
+        "left": (0, 0, w // 8, h),
+        "right": (w - w // 8, 0, w, h),
+    }[where]
+    return img.crop(box).resize((1, 1)).getpixel((0, 0))
+
+
+def _is_red(pixel: tuple[int, int, int]) -> bool:
+    return pixel[0] > 120 and pixel[1] < 90 and pixel[2] < 90
+
+
+def test_without_exif_the_image_is_not_rotated() -> None:
+    """The control. Without this, the rotation test could pass for the wrong reason."""
+    buf = io.BytesIO()
+    _banded().save(buf, format="JPEG", quality=95)
+    out = normalize_bytes(buf.getvalue(), NormalizationPolicy(size=200))
+    assert _is_red(_edge(out, "top")), "an unrotated image should keep its band on top"
+    assert not _is_red(_edge(out, "right"))
+
+
 def test_exif_rotation_is_applied_before_it_is_discarded() -> None:
     """Order matters, and getting it wrong corrupts one class only.
 
     Phone photographs are frequently stored sideways with an orientation flag. Dropping the
-    flag before applying it leaves the centre crop taking the wrong region of every such
-    image, systematically and silently, and only for the human population.
+    flag before applying it leaves every such image displayed wrongly, systematically and
+    silently, and only in the human population, since generated images never carry EXIF.
+
+    Orientation 6 means "rotate 90 degrees clockwise to display", so a band along the top
+    of the stored pixels belongs on the RIGHT of the displayed image. The source is square
+    so the centre crop cannot quietly remove the evidence.
     """
-    tall = Image.new("RGB", (400, 800), (0, 0, 0))
-    tall.paste(Image.new("RGB", (400, 100), (255, 0, 0)), (0, 0))   # red band at the top
     buf = io.BytesIO()
     exif = Image.Exif()
-    exif[274] = 6      # rotate 90 CW on display
-    tall.save(buf, format="JPEG", exif=exif, quality=95)
+    exif[274] = 6
+    _banded().save(buf, format="JPEG", exif=exif, quality=95)
 
-    out = Image.open(io.BytesIO(normalize_bytes(buf.getvalue(), NormalizationPolicy(size=200))))
-    # After transposition the red band is on one SIDE, so the left and right halves differ.
-    left = out.crop((0, 0, 20, 200)).resize((1, 1)).getpixel((0, 0))
-    right = out.crop((180, 0, 200, 200)).resize((1, 1)).getpixel((0, 0))
-    assert left != right, "orientation was discarded before it was applied"
+    out = normalize_bytes(buf.getvalue(), NormalizationPolicy(size=200))
+    assert _is_red(_edge(out, "right")), "orientation was discarded before it was applied"
+    assert not _is_red(_edge(out, "top")), "the band is still where the raw pixels had it"
 
 
 def test_alpha_and_palette_are_flattened() -> None:
