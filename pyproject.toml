@@ -33,6 +33,10 @@ data = [
   "datasketch>=1.6",
   "presidio-analyzer>=2.2",
 ]
+# FORGE-IMAGE: see docs/image_spec_v1.md
+image = [
+  "pillow>=10.0",
+]
 # Phase 2 and 3: generation and training
 train = [
   "torch>=2.3",
