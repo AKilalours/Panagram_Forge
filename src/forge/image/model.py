@@ -12,7 +12,7 @@ SHAPE
 THE DECISIONS THAT ARE NOT OBVIOUS
 
 1. THE LOSS IS COMPUTED AT PATCH RESOLUTION, NOT PIXEL RESOLUTION. The local head emits one
-   logit per patch, a 16x16 grid for a 224-pixel image at patch size 14. The obvious move is
+   logit per patch, a 14x14 grid for a 224-pixel image at patch size 16. The obvious move is
    to upsample those logits to the mask's resolution and take a pixel-wise loss. That makes
    the loss dominated by interpolation: the model is graded on how a resize behaved rather
    than on what it predicted. Downsampling the MASK to the patch grid instead grades exactly
