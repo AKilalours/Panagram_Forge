@@ -76,7 +76,9 @@ def test_the_stored_mask_is_hard_not_feathered() -> None:
     """
     _, mask, _ = build_composite(PHOTOS[1][1], GENERATED[0], "oi_00001", "ai_region")
     with Image.open(io.BytesIO(mask)) as img:
-        values = set(img.convert("L").getdata())
+        grey = img.convert("L")
+        reader = getattr(grey, "get_flattened_data", None) or grey.getdata
+        values = set(reader())
     assert values <= {0, 255}, f"mask contains intermediate values: {sorted(values)[:8]}"
 
 

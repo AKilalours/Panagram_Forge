@@ -195,5 +195,9 @@ def mask_area_fraction(mask_png: bytes) -> float:
     from PIL import Image
 
     with Image.open(io.BytesIO(mask_png)) as mask:
-        pixels = list(mask.convert("L").getdata())
+        grey = mask.convert("L")
+        # get_flattened_data replaces getdata in Pillow 14. Read through whichever exists,
+        # so a library upgrade cannot change what a stored mask means.
+        reader = getattr(grey, "get_flattened_data", None) or grey.getdata
+        pixels = list(reader())
     return sum(1 for value in pixels if value > 127) / len(pixels)
