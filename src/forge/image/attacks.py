@@ -130,6 +130,12 @@ class Attack:
     name: str
     apply: Callable[[bytes], bytes]
     description: str
+    # Geometric attacks change the FRAME: which pixels are present and at what scale.
+    # Photometric attacks change the pixels while keeping the frame. The distinction
+    # matters because the recognisability check is a global fingerprint comparison, and a
+    # crop legitimately changes the global layout. Judging a crop by that check calls
+    # correct behaviour vandalism. See preserves_content.
+    geometric: bool = False
 
 
 # The registry. Ordered from mildest to most aggressive, so a robustness table reads as a
@@ -139,10 +145,10 @@ ATTACKS: tuple[Attack, ...] = (
     Attack("sharpen", lambda b: sharpen(b), "default phone or app sharpening"),
     Attack("blur_mild", lambda b: blur(b, 0.8), "mild gaussian blur"),
     Attack("jpeg_85", lambda b: jpeg(b, 85), "light lossy re-encode"),
-    Attack("crop_80", lambda b: crop(b, 0.8), "centre crop, borders removed"),
-    Attack("resize_half", lambda b: resize(b, 0.5), "downscale to 50 percent"),
+    Attack("crop_80", lambda b: crop(b, 0.8), "centre crop, borders removed", True),
+    Attack("resize_half", lambda b: resize(b, 0.5), "downscale to 50 percent", True),
     Attack("jpeg_50", lambda b: jpeg(b, 50), "moderate lossy re-encode"),
-    Attack("screenshot", lambda b: screenshot(b), "rescale plus lossy re-encode"),
+    Attack("screenshot", lambda b: screenshot(b), "rescale plus lossy re-encode", True),
     Attack("recompress_twice", lambda b: recompress_twice(b), "two lossy generations"),
     Attack("jpeg_25", lambda b: jpeg(b, 25), "heavy lossy re-encode"),
 )
@@ -156,17 +162,50 @@ def apply_attack(raw: bytes, name: str) -> bytes:
     return ATTACKS_BY_NAME[name].apply(raw)
 
 
-def preserves_content(original: bytes, attacked: bytes, max_distance: int = 12) -> bool:
+def preserves_content(
+    original: bytes,
+    attacked: bytes,
+    max_distance: int = 12,
+    geometric: bool = False,
+) -> bool:
     """Is the attacked image still recognisably the same picture?
 
-    Measured with the perceptual hash rather than pixel difference, because every attack
-    here changes most pixels while changing little of what the image depicts. An attack
-    that fails this is vandalism and must not appear in a robustness table: reporting that
-    a detector fails on an unrecognisable image says nothing about the detector.
+    PHOTOMETRIC attacks keep the frame and change the pixels, so a global perceptual hash
+    is the right instrument: a JPEG at quality 25 should still fingerprint close to the
+    original, and one that does not has destroyed the image.
 
-    The bound is looser than the deduplication bound, deliberately. Dedup asks "is this the
-    same image"; this asks "is this still the same picture", which tolerates more.
+    GEOMETRIC attacks change the frame by construction. A centre crop removes a fifth of
+    every edge, so the global fingerprint moves a long way while the picture remains
+    obviously the same picture. Judging a crop by the photometric bound calls correct
+    behaviour vandalism, which is how a robustness suite ends up excluding the attacks that
+    matter most. The text track did precisely this: its validity check discarded the
+    homoglyph attacks that worked.
+
+    For geometric attacks the question is instead whether enough of the original survives,
+    which is answered by comparing the attacked image against the same region of the
+    original rather than against the whole of it.
     """
     from forge.image.phash import dhash, distance
 
-    return distance(dhash(original), dhash(attacked)) <= max_distance
+    if not geometric:
+        return distance(dhash(original), dhash(attacked)) <= max_distance
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(original)) as source, Image.open(io.BytesIO(attacked)) as result:
+        source = source.convert("RGB")
+        result = result.convert("RGB")
+        # Compare like with like: put the attacked image and the CENTRE of the original at
+        # the same size, so scale and border differences are removed and only the content
+        # is being judged.
+        side = min(*result.size)
+        keep = min(source.size)
+        left = (source.width - keep) // 2
+        top = (source.height - keep) // 2
+        reference = source.crop((left, top, left + keep, top + keep)).resize((side, side))
+        candidate = result.resize((side, side))
+        buf_a, buf_b = io.BytesIO(), io.BytesIO()
+        reference.save(buf_a, format="PNG")
+        candidate.save(buf_b, format="PNG")
+
+    return distance(dhash(buf_a.getvalue()), dhash(buf_b.getvalue())) <= max_distance

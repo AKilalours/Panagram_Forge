@@ -64,10 +64,17 @@ def test_every_attack_produces_a_valid_image(attack) -> None:
 
 @pytest.mark.parametrize("attack", ATTACKS, ids=lambda a: a.name)
 def test_every_attack_leaves_the_picture_recognisable(attack) -> None:
-    """An attack that destroys the image is vandalism and proves nothing about robustness."""
-    assert preserves_content(ORIGINAL, attack.apply(ORIGINAL)), (
-        f"{attack.name} changed the picture beyond recognition"
-    )
+    """An attack that destroys the image is vandalism and proves nothing about robustness.
+
+    Geometric attacks are judged against the same region of the original rather than the
+    whole of it, because a crop changes the global fingerprint by construction. Judging
+    them photometrically would call correct behaviour vandalism and quietly drop the
+    attacks that matter most, which is what the text track's validity check did to its
+    homoglyph attacks.
+    """
+    assert preserves_content(
+        ORIGINAL, attack.apply(ORIGINAL), geometric=attack.geometric
+    ), f"{attack.name} changed the picture beyond recognition"
 
 
 @pytest.mark.parametrize(
@@ -82,8 +89,11 @@ def test_every_attack_survives_normalisation(attack) -> None:
     normalisation flattened an attack, its row in the robustness table would be a zero that
     read as excellent robustness rather than as a measurement that never happened.
     """
-    clean = normalize_bytes(ORIGINAL)
-    attacked = normalize_bytes(attack.apply(ORIGINAL))
+    # allow_upscale=True because this is the SERVING path. Downscaling is one of the most
+    # common things that happens to an image online, so a pipeline that refuses a
+    # downscaled image cannot measure robustness to downscaling at all.
+    clean = normalize_bytes(ORIGINAL, allow_upscale=True)
+    attacked = normalize_bytes(attack.apply(ORIGINAL), allow_upscale=True)
     assert clean != attacked, f"{attack.name} had no effect once normalised"
 
 
@@ -97,9 +107,30 @@ def test_metadata_strip_is_a_no_op_after_normalisation_and_that_is_the_point() -
     assert normalize_bytes(ORIGINAL) == normalize_bytes(strip_metadata(ORIGINAL))
 
 
+def test_corpus_building_still_refuses_to_upscale() -> None:
+    """The default must stay strict. Only serving and evaluation opt out.
+
+    A corpus built from upscaled images would contain fabricated high-frequency detail in
+    the human class only, which is a source signature the detector would happily learn.
+    """
+    from forge.image.normalize import ImageTooSmallError, was_upscaled
+
+    small = resize_bytes_for_test(ORIGINAL, 0.4)
+    assert was_upscaled(small) is True
+    with pytest.raises(ImageTooSmallError, match="allow_upscale"):
+        normalize_bytes(small)
+    assert normalize_bytes(small, allow_upscale=True)
+
+
+def resize_bytes_for_test(raw: bytes, scale: float) -> bytes:
+    from forge.image.attacks import resize
+
+    return resize(raw, scale)
+
+
 def test_attacks_are_ordered_from_mild_to_aggressive() -> None:
     """A robustness table should read as a progression, not an arbitrary list."""
-    mild = preserves_content(ORIGINAL, apply_attack(ORIGINAL, "jpeg_85"), max_distance=4)
+    mild = preserves_content(ORIGINAL, apply_attack(ORIGINAL, "jpeg_85"), max_distance=6)
     assert mild, "jpeg_85 should be very close to the original"
 
 
@@ -137,10 +168,11 @@ def test_vandalism_is_detected_as_such() -> None:
     """preserves_content must actually be able to say no, or it protects nothing."""
     noise = _photo(seed=91)
     assert not preserves_content(ORIGINAL, noise)
+    assert not preserves_content(ORIGINAL, noise, geometric=True)
 
 
 def test_attacked_images_still_normalise_to_the_policy_shape() -> None:
     """The pipeline must accept attacked inputs, since that is what production sees."""
     for attack in ATTACKS:
-        got = describe(normalize_bytes(attack.apply(ORIGINAL)))
+        got = describe(normalize_bytes(attack.apply(ORIGINAL), allow_upscale=True))
         assert (got["width"], got["height"]) == (POLICY_V1.size, POLICY_V1.size), attack.name

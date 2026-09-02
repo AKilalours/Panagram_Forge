@@ -53,7 +53,11 @@ class ImageTooSmallError(ValueError):
     """Upscaling invents detail, and invented detail is a generation artifact."""
 
 
-def normalize_bytes(raw: bytes, policy: NormalizationPolicy = POLICY_V1) -> bytes:
+def normalize_bytes(
+    raw: bytes,
+    policy: NormalizationPolicy = POLICY_V1,
+    allow_upscale: bool = False,
+) -> bytes:
     """Return JPEG bytes that carry no trace of how the input was encoded.
 
     Steps, in this order and for these reasons:
@@ -68,9 +72,22 @@ def normalize_bytes(raw: bytes, policy: NormalizationPolicy = POLICY_V1) -> byte
     4. Resize to the policy size with one resampling filter.
     5. Re-encode as JPEG at one fixed quality with fixed subsampling, no metadata.
 
-    Refuses to upscale: an image smaller than the policy size is rejected rather than
-    interpolated, because interpolation fabricates high-frequency content and that is
-    precisely the kind of thing the detector is being asked to notice.
+    UPSCALING: TWO CALLERS, TWO ANSWERS.
+
+    When BUILDING A CORPUS, an image below the policy size is rejected. Interpolation
+    fabricates high-frequency content, which is precisely what the detector is being asked
+    to judge, and there are nine million candidate images, so discarding the small ones
+    costs nothing.
+
+    When SERVING or EVALUATING, refusing is not available. A user uploads what they upload,
+    and a detector that raises on a 400px image is not a detector. Worse, half the
+    adversarial suite produces small images by construction: downscaling is one of the most
+    common things that happens to an image online, so a pipeline that cannot process a
+    downscaled image cannot measure robustness to downscaling at all.
+
+    So `allow_upscale` is an explicit choice by the caller rather than a default, and the
+    upscaled path is a documented compromise: it fabricates detail, and that is a reason to
+    treat such a prediction with less confidence, not a reason to refuse the request.
     """
     from PIL import Image, ImageOps
 
@@ -79,10 +96,12 @@ def normalize_bytes(raw: bytes, policy: NormalizationPolicy = POLICY_V1) -> byte
         img = img.convert("RGB")                # 2
 
         short_side = min(img.size)
-        if short_side < policy.size:
+        if short_side < policy.size and not allow_upscale:
             raise ImageTooSmallError(
                 f"image is {img.size[0]}x{img.size[1]}, short side {short_side} is below "
-                f"the policy size {policy.size}. Upscaling would fabricate detail."
+                f"the policy size {policy.size}. Upscaling would fabricate detail. Pass "
+                "allow_upscale=True on the serving and evaluation paths, where refusing "
+                "an image is not an option."
             )
 
         left = (img.size[0] - short_side) // 2
@@ -100,6 +119,19 @@ def normalize_bytes(raw: bytes, policy: NormalizationPolicy = POLICY_V1) -> byte
             progressive=False,
         )
     return buf.getvalue()
+
+
+def was_upscaled(raw: bytes, policy: NormalizationPolicy = POLICY_V1) -> bool:
+    """Would normalising this image have fabricated detail?
+
+    Recorded alongside a prediction so an upscaled input can be identified later. A model
+    is not being lied to here, but it is being shown interpolated pixels, and a failure on
+    such an image means something different from a failure on a native-resolution one.
+    """
+    from PIL import Image
+
+    with Image.open(io.BytesIO(raw)) as img:
+        return min(img.size) < policy.size
 
 
 def describe(raw: bytes) -> dict:
