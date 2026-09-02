@@ -48,7 +48,12 @@ ROSTER = {
 MIRROR_CFG = {
     "prompt_version": "mirror_v1",
     "prompt_path": "src/forge/generation/prompts/mirror_v1.txt",
-    "validation": {"max_retries": 0},
+    # Wide ratios on purpose: these tests are about SCHEDULING, not about validation.
+    # With the defaults the recorder's fixed-length output scored a 1.84 length ratio
+    # against the fixture humans and every document was rejected, leaving nothing to
+    # assert on. A fixture that silently produces zero documents makes several of these
+    # tests vacuously pass, which is worse than failing.
+    "validation": {"max_retries": 0, "length_ratio_min": 0.1, "length_ratio_max": 10.0},
 }
 
 
@@ -157,6 +162,12 @@ def test_prompts_are_sent_in_batches(recorder: type[_Recorder]) -> None:
 def test_batches_do_not_exceed_the_configured_bound(recorder: type[_Recorder]) -> None:
     generate_mirrors(_humans(60), ROSTER, MIRROR_CFG, backend="vllm")
     assert max(recorder.batch_sizes) <= run_mod.GENERATION_BATCH
+
+
+def test_the_fixture_actually_produces_documents(recorder: type[_Recorder]) -> None:
+    """Guard the other tests against passing vacuously on an empty result."""
+    result = generate_mirrors(_humans(60), ROSTER, MIRROR_CFG, backend="vllm")
+    assert len(result.docs) == 60, result.stats
 
 
 def test_output_order_follows_the_human_corpus(recorder: type[_Recorder]) -> None:

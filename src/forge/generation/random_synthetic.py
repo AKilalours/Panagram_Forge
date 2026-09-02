@@ -124,7 +124,7 @@ def generate_random(
     max_retries: int = 2,
 ) -> RandomResult:
     from forge.generation.mirror import _PREAMBLE
-    from forge.generation.run import GENERATION_BATCH, build_generator
+    from forge.generation.run import GENERATION_BATCH, batch_generate, build_generator, release
 
     if not length_pool:
         raise ValueError("length_pool is empty; read it from the human corpus")
@@ -181,8 +181,8 @@ def generate_random(
                 texts: list[str] = []
                 for j in range(0, len(prompts), GENERATION_BATCH):
                     texts.extend(
-                        gen.generate_many(
-                            prompts[j : j + GENERATION_BATCH], decs[j : j + GENERATION_BATCH]
+                        batch_generate(
+                            gen, prompts[j : j + GENERATION_BATCH], decs[j : j + GENERATION_BATCH]
                         )
                     )
                     done = min(j + GENERATION_BATCH, len(prompts))
@@ -213,7 +213,7 @@ def generate_random(
                         still.append(item)
                 pending = still
         finally:
-            gen.close()
+            release(gen)
 
     # PASS 3: assemble in index order, so output does not depend on family scheduling.
     out: list[SyntheticDocument] = []

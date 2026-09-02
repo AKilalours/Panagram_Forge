@@ -64,6 +64,27 @@ class MirrorResult:
     partitions: dict[str, int] = field(default_factory=dict)
 
 
+def batch_generate(gen, prompts: list[str], decodings: list[Decoding]) -> list[str]:
+    """Call the backend's batched entry point, falling back to per-prompt calls.
+
+    The Generator protocol is structural, and test doubles predating generate_many only
+    implement generate(). Falling back keeps them working. Real backends all implement
+    generate_many, and it is the batched path that makes generation feasible at all, so
+    the fallback is a compatibility shim rather than an acceptable production route.
+    """
+    many = getattr(gen, "generate_many", None)
+    if many is not None:
+        return many(prompts, decodings)
+    return [gen.generate([p], d)[0] for p, d in zip(prompts, decodings)]
+
+
+def release(gen) -> None:
+    """Release a backend's resources if it knows how. Safe on doubles that do not."""
+    close = getattr(gen, "close", None)
+    if close is not None:
+        close()
+
+
 # How many prompts to hand the backend at once.
 #
 # vLLM schedules internally, so this is not the batch size the GPU sees; it bounds how
@@ -196,8 +217,8 @@ def generate_mirrors(
                 texts: list[str] = []
                 for i in range(0, len(prompts), GENERATION_BATCH):
                     texts.extend(
-                        gen.generate_many(
-                            prompts[i : i + GENERATION_BATCH], decs[i : i + GENERATION_BATCH]
+                        batch_generate(
+                            gen, prompts[i : i + GENERATION_BATCH], decs[i : i + GENERATION_BATCH]
                         )
                     )
                     done = min(i + GENERATION_BATCH, len(prompts))
@@ -217,7 +238,7 @@ def generate_mirrors(
                         still.append(w)
                 pending = still
         finally:
-            gen.close()
+            release(gen)
 
     # PASS 3. Assemble in the humans' original order, so the parquet output does not
     # depend on which family happened to be processed first.
