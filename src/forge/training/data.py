@@ -58,6 +58,7 @@ def load_examples(
     expect_arm: str | None = None,
     ai_cap: int | None = None,
     ai_reference: list[RawExample] | None = None,
+    human_cap: int | None = None,
     mirror_root: str | Path | None = None,   # deprecated alias
 ) -> list[RawExample]:
     """Load one arm's training data.
@@ -132,6 +133,19 @@ def load_examples(
                 mixed_rows.append(RawExample(r["doc_id"], r["source_group_id"], r["split"], r["text"],
                                              int(ai / max(len(r["text"]), 1) >= 0.5), spans,
                                              r.get("domain", "unknown")))
+
+    # human_cap exists to control TRAINING TIME, not the experiment. Both arms read the
+    # same human corpus, so capping it identically in both cannot favour either one. It is
+    # a separate knob from ai_cap because the two answer different questions: ai_cap makes
+    # the arms comparable, human_cap makes the run finish tonight.
+    #
+    # NOT the `limit` parameter, which round-robins across (source, split) buckets and
+    # therefore returns EQUAL numbers of train, val and test rows. That is correct for a
+    # smoke run, where the point is to touch every split, and wrong for a real run, where
+    # it would spend a third of the budget on the test split. cap_documents caps per split
+    # and preserves the proportions the corpus actually has.
+    if human_cap is not None and len(human_rows) > human_cap:
+        human_rows = cap_documents(human_rows, human_cap)
 
     if ai_cap is not None and len(ai_rows) > ai_cap:
         if ai_reference is not None:

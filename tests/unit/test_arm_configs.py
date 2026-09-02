@@ -47,15 +47,32 @@ def test_the_arms_agree_on_the_budget(configs: dict[str, dict]) -> None:
 def test_the_budget_does_not_exceed_what_was_generated(configs: dict[str, dict]) -> None:
     """A cap above the smaller arm's yield silently does nothing.
 
-    `load_examples` only caps when the arm has MORE rows than the cap. Set it to 20,000 and
-    the mirror arm's 18,856 pass through untouched while the random arm is cut to 20,000,
+    `load_examples` only caps when the arm has MORE rows than the cap. Set it above the
+    smaller arm's yield and that arm passes through untouched while the larger one is cut,
     which is the unequal-budget bug wearing the clothes of a fix.
+
+    MEASURED, not hardcoded. An earlier version of this test carried the literal 18,856,
+    which was correct for exactly one corpus and became wrong the moment the corpora were
+    regenerated: it then failed on a config that was fine. A test that has to be edited
+    whenever the data changes is a test that will be edited to pass. This reads the parquet
+    when it is there and skips when it is not, so it is silent on a laptop and binding on
+    the machine that actually trains.
     """
-    generated = 18_856   # mirrors, counted from the parquet after generation
+    pytest.importorskip("pyarrow")
+    import pyarrow.dataset as ds
+
+    counts = {}
     for path, cfg in configs.items():
-        assert cfg["data"]["ai_cap"] <= generated, (
-            f"{path} caps at {cfg['data']['ai_cap']}, above the smaller arm's {generated} "
-            "accepted documents, so the cap does nothing for that arm"
+        root = REPO_ROOT / cfg["paths"]["ai"]
+        if not root.is_dir():
+            pytest.skip(f"{root} is not present; nothing to measure against")
+        counts[path] = ds.dataset(str(root), format="parquet", partitioning="hive").count_rows()
+
+    smallest = min(counts.values())
+    for path, cfg in configs.items():
+        assert cfg["data"]["ai_cap"] <= smallest, (
+            f"{path} caps at {cfg['data']['ai_cap']}, above the smaller arm's {smallest} "
+            f"generated documents ({counts}), so the cap does nothing for that arm"
         )
 
 
@@ -118,3 +135,21 @@ def test_the_data_blocks_differ_only_where_they_must(configs: dict[str, dict]) -
 def test_every_arm_config_named_here_exists() -> None:
     for path in ARMS:
         assert (REPO_ROOT / Path(path)).is_file(), f"{path} is missing"
+
+
+def test_both_arms_cap_the_human_pool_identically(configs: dict[str, dict]) -> None:
+    """human_cap controls RUN TIME, not the experiment, so it must be identical.
+
+    Both arms read the same human corpus. Capping it differently would give one arm more
+    negatives than the other, and a false-positive-rate comparison between arms trained on
+    different amounts of human text says nothing.
+    """
+    caps = {path: cfg["data"].get("human_cap") for path, cfg in configs.items()}
+    assert len(set(caps.values())) == 1, f"the arms cap humans differently: {caps}"
+
+
+def test_both_arms_run_the_same_number_of_epochs(configs: dict[str, dict]) -> None:
+    """Already covered by the identical-training-block assertion, stated separately because
+    epochs is the field most likely to be edited by hand at 2am."""
+    epochs = {cfg["training"]["epochs"] for cfg in configs.values()}
+    assert len(epochs) == 1, f"the arms train for different numbers of epochs: {epochs}"

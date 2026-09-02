@@ -21,7 +21,14 @@ data:
   # accepted 22,713, counted from the parquet with pyarrow rather than from the log,
   # because a log records what the generator believed and the parquet records what landed.
   # The smaller arm sets the budget for both.
-  ai_cap: 18856
+  # Chosen for SCHEDULE, not for the experiment. The per-document length fix lifted
+  # acceptance from 31.5% to about 99.5%, so each arm now yields roughly 59,000 documents
+  # instead of 18,856. That is more data than there is night: 119k documents at three
+  # epochs is about 4.5 GPU-hours PER ARM. 20,000 of each class, two epochs, is under an
+  # hour per arm and is a perfectly respectable size for the claim being made. The full
+  # corpus stays on disk for a scaled-up run later.
+  ai_cap: 20000
+  human_cap: 20000
   # LENGTH MATCHING. Point both arms at the MIRROR arm's directory. The mirror arm then
   # matches itself, a no-op; the control arm is reshaped so its length distribution tracks
   # the mirror arm's. Without this the arms differ in length as well as in matching,
@@ -35,7 +42,7 @@ training:
   learning_rate: 2.0e-5
   weight_decay: 0.01
   warmup_ratio: 0.06
-  epochs: 3
+  epochs: 2
   seed: 42
   precision: bf16
   gradient_checkpointing: true

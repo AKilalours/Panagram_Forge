@@ -274,6 +274,7 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
         mixed_root=paths.get("mixed"), limit=limit, expect_arm=arm,
         ai_cap=dcfg.get("ai_cap"),
         ai_reference=_reference_arm(dcfg),
+        human_cap=dcfg.get("human_cap"),
     )
     if not examples:
         raise RuntimeError(
