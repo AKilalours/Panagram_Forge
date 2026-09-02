@@ -153,7 +153,12 @@ class VLLMGenerator:
         )
 
     def generate(self, prompts: list[str], decoding: Decoding) -> list[str]:  # pragma: no cover
-        outs = self._load().generate(prompts, self._params(decoding), use_tqdm=False)
+        # Check BEFORE _load(). Python evaluates the callee before the arguments, so
+        # folding the check into _params() would run it only after the engine had
+        # already been constructed, which defeats the point of failing up front.
+        self._check_fits(decoding)
+        params = self._params(decoding)
+        outs = self._load().generate(prompts, params, use_tqdm=False)
         return [o.outputs[0].text for o in outs]
 
     def generate_many(self, prompts: list[str], decodings: list[Decoding]) -> list[str]:  # pragma: no cover
@@ -161,6 +166,8 @@ class VLLMGenerator:
             raise ValueError(f"{len(prompts)} prompts but {len(decodings)} decodings")
         if not prompts:
             return []
+        for d in decodings:
+            self._check_fits(d)
         params = [self._params(d) for d in decodings]
         # use_tqdm=False: vLLM's per-request progress bar rewrites the line thousands of
         # times, which is unreadable in a tee'd log and makes the log ungreppable. The

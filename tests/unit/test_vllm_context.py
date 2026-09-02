@@ -106,6 +106,22 @@ def test_output_longer_than_the_context_is_refused_up_front() -> None:
     with pytest.raises(ContextTooSmallError) as e:
         gen.generate(["prompt"], Decoding(temperature=0.7, top_p=0.9, max_new_tokens=640))
     assert "max_new_tokens" in str(e.value) and "max_model_len" in str(e.value)
+    assert gen._llm is None, "the engine was constructed before the check refused the run"
+
+
+def test_the_batched_path_also_refuses_before_loading() -> None:
+    """generate_many must refuse up front too, not only generate.
+
+    This regressed once already: folding the check into _params() meant Python evaluated
+    self._load() first, so the engine was built before the guard could fire.
+    """
+    gen = VLLMGenerator("qwen", "Qwen/Qwen2.5-3B-Instruct", SHA, max_model_len=512)
+    with pytest.raises(ContextTooSmallError):
+        gen.generate_many(
+            ["a", "b"],
+            [Decoding(temperature=0.7, top_p=0.9, max_new_tokens=640)] * 2,
+        )
+    assert gen._llm is None, "the engine was constructed before the check refused the run"
 
 
 def test_the_minimal_config_decoding_fits_the_default_context() -> None:
