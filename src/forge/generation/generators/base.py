@@ -97,6 +97,44 @@ class ContextTooSmallError(ValueError):
     pass
 
 
+class GpuNotFreeError(RuntimeError):
+    pass
+
+
+def require_free_gpu(min_free_gib: float = 18.0) -> None:
+    """Refuse to build an engine when the card is already occupied.
+
+    WHY. A vLLM engine reserves gpu_memory_utilization (0.9) of the card at startup and
+    dies if that much is not free. Twice now a run has been launched while an earlier job
+    still held the GPU, and the failure arrived several minutes in, as
+
+        ValueError: Free memory on device (0.56/23.53 GiB) on startup is less than
+        desired GPU memory utilization (0.9, 21.17 GiB)
+
+    which names the symptom and not the cause. The two causes worth distinguishing are a
+    stale job the operator forgot about, and close() having failed to release the previous
+    family's engine, which would be a bug in this file. Say both, up front, in a second.
+    """
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return
+        free, total = torch.cuda.mem_get_info()
+    except Exception:
+        # No GPU visible, or a torch build that cannot report. Not a reason to block.
+        return
+    free_gib = free / 1024**3
+    if free_gib >= min_free_gib:
+        return
+    raise GpuNotFreeError(
+        f"only {free_gib:.2f} GiB of {total / 1024**3:.2f} GiB is free on the GPU, and an "
+        f"engine needs about {min_free_gib:.0f}. Either another job still holds the card "
+        "(check `tmux ls` and `nvidia-smi`), or the previous family's engine was not "
+        "released, which would be a bug in VLLMGenerator.close()."
+    )
+
+
 class VLLMGenerator:
     """Offline batch generation for open-weight families."""
 
@@ -133,6 +171,7 @@ class VLLMGenerator:
         if self._llm is None:
             from vllm import LLM
 
+            require_free_gpu()
             self._llm = LLM(
                 model=self.model_id,
                 revision=self.revision,
