@@ -160,7 +160,7 @@ def generate_mirrors(
                 human=human,
                 attrs=attrs,
                 spec=spec,
-                decoding=assign_decoding(human.doc_id, grid),
+                decoding=assign_decoding(human.doc_id, grid, attrs.target_tokens),
                 prompt=render_prompt(attrs, template),
             )
         )

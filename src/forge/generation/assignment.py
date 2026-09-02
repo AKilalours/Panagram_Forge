@@ -81,10 +81,63 @@ def assign_family(doc_id: str, families: list[FamilySpec]) -> FamilySpec:
     return families[_digest(doc_id, "family") % len(families)]
 
 
-def assign_decoding(doc_id: str, grid: dict) -> Decoding:
+# Subword tokens per whitespace word, English. Both arms measure their length targets in
+# WORDS (forge.cleaning.filters.approx_token_count is a word count, and the mirror
+# extractor's target_tokens is len(text.split())), while max_new_tokens is in TOKENS. The
+# conversion has to happen somewhere; here, once, named.
+TOKENS_PER_WORD = 1.35
+
+# Room above the target so a model can finish its last sentence instead of being cut off
+# mid-clause. Truncation is not a neutral failure: text that stops mid-word is trivially
+# detectable, and a detector that learns THAT is worse than one that learns length. 1.3 is
+# generous enough to end cleanly and still far below the validator's 1.6 ratio ceiling.
+LENGTH_HEADROOM = 1.3
+
+# Floor, so a very short source still gets a usable budget rather than a few tokens.
+MIN_NEW_TOKENS = 96
+
+
+def token_budget(target_words: int, grid_max: int) -> int:
+    """Per-document max_new_tokens from a per-document word target.
+
+    THE BUG THIS FIXES, and it is the most expensive one in the project so far.
+
+    Every document was generated with ONE max_new_tokens, 640, taken from the decoding
+    grid. Both arms already computed a correct per-document length target and put it in
+    the prompt: the mirror arm from its source document, the control arm sampled from the
+    human corpus's own length distribution. The models ignored it and wrote to the cap.
+
+    Measured on the finished corpora:
+
+        human    median 250 words
+        mirror   median 364 words   AUROC from length alone 0.774
+        random   median 394 words   AUROC from length alone 0.841
+
+    A detector scores 0.84 on the control arm WITHOUT READING A WORD. Both arms would have
+    trained a length detector and the experiment would have compared two of them.
+
+    The cap was not a ceiling the models bumped into. It was a target they ran to. Nothing
+    reported an error, the prompts looked right, and the stated target was simply advice.
+    """
+    if target_words <= 0:
+        raise ValueError(f"target_words must be positive, got {target_words}")
+    wanted = int(target_words * TOKENS_PER_WORD * LENGTH_HEADROOM)
+    return max(MIN_NEW_TOKENS, min(wanted, grid_max))
+
+
+def assign_decoding(doc_id: str, grid: dict, target_words: int | None = None) -> Decoding:
+    """Pick decoding for one document.
+
+    `target_words` is optional so the function keeps working for callers that have no
+    length target, but every production caller passes one. Temperature, top_p and seed are
+    chosen exactly as before, from the same hashes, so adding a length budget does NOT
+    change which decoding setting a document receives.
+    """
     temps = list(grid.get("temperature", [0.7]))
     tops = list(grid.get("top_p", [0.9]))
     max_new = int(grid.get("max_new_tokens", 1024))
+    if target_words is not None:
+        max_new = token_budget(target_words, max_new)
     options: list[tuple[float, float]] = [(t, p) for t in temps for p in tops]
     if grid.get("include_greedy"):
         options.append((0.0, 1.0))

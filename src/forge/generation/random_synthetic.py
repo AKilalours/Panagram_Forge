@@ -149,7 +149,7 @@ def generate_random(
         doc_key = f"rand_{i}"
         fam = assign_family(doc_key, families)
         used.add(fam.family)
-        prepared.append((i, spec, fam, assign_decoding(doc_key, grid)))
+        prepared.append((i, spec, fam, assign_decoding(doc_key, grid, spec.target_tokens)))
 
     by_family: dict[str, list[tuple[int, object, object, Decoding]]] = {}
     for item in prepared:

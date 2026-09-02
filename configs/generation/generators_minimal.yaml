@@ -17,7 +17,17 @@ decoding_grid:
   temperature: [0.5, 0.7, 1.0]
   top_p: [0.9, 0.95]
   include_greedy: true
-  max_new_tokens: 640
+  # A CEILING, not a target. Every document now gets its own budget from its own length
+  # target (forge.generation.assignment.token_budget); this only stops a pathologically
+  # long source from asking for more than the context can hold.
+  #
+  # Was 640 for every document, which is where the length confound came from: 640 tokens is
+  # about 474 words against a human median of 250, and the models treated the cap as a
+  # target. 640 also still binds at 365 source words, and the human corpus's p90 is 367, so
+  # leaving it there would clip the entire upper tail and trade a too-long bias for a
+  # too-short one. 2048 covers the corpus's longest documents (1100 words is about 1930
+  # tokens with headroom) and still leaves room for the prompt inside max_model_len 4096.
+  max_new_tokens: 2048
 
 families:
   - family: qwen
