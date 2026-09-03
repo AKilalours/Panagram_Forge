@@ -113,14 +113,22 @@ def real_format(data: bytes) -> Finding:
     try:
         with Image.open(io.BytesIO(data)) as img:
             fmt, size, mode = img.format, img.size, img.mode
+            frames = int(getattr(img, "n_frames", 1) or 1)
     except Exception as error:  # noqa: BLE001
         return _fail_soft("file_type", error, "")
+    caveat = "the container format says how the file was written, not who wrote it"
+    if frames > 1:
+        # MPO (dual-lens phones, 3D cameras) and multi-frame TIFF hold several images in one
+        # file. Everything downstream reads frame 0, which is the frame a viewer shows. Said
+        # here because a signal measured on one frame is not a statement about the others.
+        caveat += f"; {frames} frames present and only the first is analysed"
     return Finding(
         name="file_type",
         value=fmt,
         status=PRESENT,
-        caveat="the container format says how the file was written, not who wrote it",
-        detail={"width": size[0], "height": size[1], "mode": mode, "bytes": len(data)},
+        caveat=caveat,
+        detail={"width": size[0], "height": size[1], "mode": mode, "bytes": len(data),
+                "frames": frames},
     )
 
 

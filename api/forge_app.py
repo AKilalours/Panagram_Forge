@@ -57,7 +57,20 @@ from forge.image.report import build_report
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 50_000
-ACCEPTED = {"JPEG", "PNG", "WEBP", "TIFF", "BMP", "GIF"}
+# MPO is a JPEG container holding more than one frame: dual-lens phones and 3D cameras
+# write it, and so does every iPhone that captures depth. Rejecting it turned away ordinary
+# photographs, which is the exact population this project exists to protect from false
+# accusations, and it was rejected by an allowlist rather than by anything measured.
+# Analysis reads frame 0; real_format says so when there is more than one.
+ACCEPTED = {"JPEG", "PNG", "WEBP", "TIFF", "BMP", "GIF", "MPO"}
+
+# Formats a phone commonly writes that Pillow cannot open without an extra decoder. Named
+# separately so the user is told what to do instead of being told the file is unreadable.
+NEEDS_DECODER = {
+    "HEIC": "HEIF images need the pillow-heif decoder; export as JPEG, or install it",
+    "HEIF": "HEIF images need the pillow-heif decoder; export as JPEG, or install it",
+    "AVIF": "AVIF images need an AVIF decoder; export as JPEG or PNG, or install one",
+}
 
 app = FastAPI(title="FORGE", version="0.2.0")
 
@@ -117,10 +130,17 @@ async def analyze_image(
         with_stability=stability,
     )
     fmt = report.by_name("file_type")
-    if fmt is None or fmt.value not in ACCEPTED:
+    detected = fmt.value if fmt else None
+    if detected not in ACCEPTED:
+        hint = NEEDS_DECODER.get(str(detected or "").upper())
         raise HTTPException(
             status_code=415,
-            detail=f"unsupported or unreadable image (detected: {fmt.value if fmt else None})",
+            detail=(
+                f"cannot read this file (detected: {detected}). {hint}"
+                if hint
+                else f"unsupported or unreadable image (detected: {detected}). "
+                f"Supported: {', '.join(sorted(ACCEPTED))}."
+            ),
         )
 
     # Forensic residual maps. NOT model saliency: no model is involved, and the panel says

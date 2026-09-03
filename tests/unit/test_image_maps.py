@@ -167,3 +167,61 @@ def test_a_skipped_stage_reports_no_cost_rather_than_zero_cost():
 
     off = build_report(_frame(flatten_patch=False), with_stability=False)
     assert "transform_stability" not in off.timings_ms
+
+
+def _mpo(frames: int = 2) -> bytes:
+    """An MPO: a JPEG container with more than one frame, as dual-lens phones write."""
+    base = Image.new("RGB", (96, 72), (120, 90, 60))
+    extra = [Image.new("RGB", (96, 72), (60, 90, 120)) for _ in range(frames - 1)]
+    buffer = io.BytesIO()
+    base.save(buffer, format="MPO", save_all=True, append_images=extra)
+    return buffer.getvalue()
+
+
+def test_a_phone_photograph_in_an_mpo_container_is_analysed_not_rejected():
+    """THE REGRESSION. MPO was refused by an allowlist, not by anything measured.
+
+    Dual-lens phones and depth captures write MPO, which is a JPEG holding several frames.
+    Turning those away rejects ordinary photographs, which are exactly the files this
+    project exists to protect from a false accusation.
+    """
+    from api.forge_app import ACCEPTED
+    from forge.image.forensics import real_format
+
+    finding = real_format(_mpo())
+    assert finding.value == "MPO"
+    assert finding.value in ACCEPTED, "an ordinary phone photograph is refused"
+
+
+def test_a_multi_frame_container_says_only_the_first_frame_was_analysed():
+    """A signal measured on frame 0 is not a statement about frames 1..n."""
+    from forge.image.forensics import real_format
+
+    finding = real_format(_mpo(frames=3))
+    assert finding.detail["frames"] == 3
+    assert "only the first is analysed" in finding.caveat
+
+
+def test_a_single_frame_file_does_not_carry_the_multi_frame_caveat():
+    """The accepting side: the caveat must fire on multi-frame files and nowhere else."""
+    from forge.image.forensics import real_format
+
+    finding = real_format(_frame(flatten_patch=False))
+    assert finding.detail["frames"] == 1
+    assert "only the first is analysed" not in finding.caveat
+
+
+def test_an_mpo_produces_a_full_report_rather_than_a_degraded_one():
+    from forge.image.report import build_report
+
+    report = build_report(_mpo(), with_stability=False)
+    assert len(report.findings) >= 10
+    assert report.by_name("file_type").value == "MPO"
+
+
+def test_a_format_needing_a_decoder_is_named_rather_than_called_unreadable():
+    """"Unreadable" sends a user nowhere. HEIC is readable, this build just cannot."""
+    from api.forge_app import NEEDS_DECODER
+
+    assert "HEIC" in NEEDS_DECODER
+    assert "pillow-heif" in NEEDS_DECODER["HEIC"]
