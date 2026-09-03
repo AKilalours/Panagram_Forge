@@ -17,6 +17,9 @@ cd "$(dirname "$0")/.."
 
 LOG=/workspace/eval_all.log
 LIMIT="${LIMIT:-4000}"
+# Which benchmarks to run. Overridable so a benchmark that needs investigation does not
+# hold up the ones that work: BENCHMARKS="hc3 mage" bash scripts/eval_all.sh
+BENCHMARKS="${BENCHMARKS:-hc3 mage raid}"
 say() { echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG"; }
 
 say "=== out-of-distribution evaluation, limit=$LIMIT per benchmark"
@@ -29,7 +32,7 @@ for arm in baseline mirror; do
 done
 
 FAILED=0
-for benchmark in hc3 mage raid; do
+for benchmark in $BENCHMARKS; do
   for arm in baseline mirror; do
     target="reports/experiments/ood_${arm}_${benchmark}.json"
     if [ -f "$target" ]; then
