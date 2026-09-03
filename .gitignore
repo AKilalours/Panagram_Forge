@@ -32,3 +32,4 @@ data/publishable/
 # so 60,000 FineWeb documents were staged for commit. This rule covers the tree itself.
 data/
 !data/**/.gitkeep
+demo/
