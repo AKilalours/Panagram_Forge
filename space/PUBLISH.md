@@ -9,6 +9,10 @@ weights from the Hub at runtime instead of bundling them.
 
 They are too large for git and they are derived artifacts, so `outputs/` stays ignored.
 
+THE HUGGING FACE USERNAME IS `Akilalourdes`. The GitHub handle is `AKilalours` and they
+are not the same string. Using the GitHub one gives a 403 naming the namespace, which
+reads like a token-permission problem and is not one.
+
 `huggingface-cli` is REMOVED in huggingface_hub 1.x: it prints a deprecation notice and
 exits without doing anything, so a script using it appears to run and creates nothing. The
 CLI is now `hf`. Do NOT `pip install -U huggingface_hub` either: 1.x breaks transformers
@@ -20,13 +24,13 @@ Create the model repo in the browser at huggingface.co/new, named `forge-detect-
 visibility private. Creating it there rather than by CLI avoids guessing flag names that
 changed with the CLI, and it is one click.
 
-    hf upload AKilalours/forge-detect-weights \
+    hf upload Akilalourdes/forge-detect-weights \
         outputs/forge_min_baseline/best.pt      forge_min_baseline/best.pt
-    hf upload AKilalours/forge-detect-weights \
+    hf upload Akilalourdes/forge-detect-weights \
         outputs/forge_min_baseline/summary.json forge_min_baseline/summary.json
-    hf upload AKilalours/forge-detect-weights \
+    hf upload Akilalourdes/forge-detect-weights \
         outputs/forge_min_mirror/best.pt        forge_min_mirror/best.pt
-    hf upload AKilalours/forge-detect-weights \
+    hf upload Akilalourdes/forge-detect-weights \
         outputs/forge_min_mirror/summary.json   forge_min_mirror/summary.json
 
 ## 2. Create the Space
@@ -53,7 +57,7 @@ whenever you want to redeploy; they rebuild the branch from whatever master is:
     git add -f Dockerfile README.md
     git commit -m "space: root Dockerfile and Space README"
 
-    git remote add space https://huggingface.co/spaces/AKilalours/forge-detect   # once
+    git remote add space https://huggingface.co/spaces/Akilalourdes/forge-detect   # once
     git push -f space space:main
     git checkout master
 
@@ -68,7 +72,7 @@ changes nothing about how it builds.
 
 In the Space settings, add:
 
-    FORGE_WEIGHTS_REPO = AKilalours/forge-detect-weights
+    FORGE_WEIGHTS_REPO = Akilalourdes/forge-detect-weights
     HF_TOKEN           = a READ token, only if the weights repo is private
 
 Never a write token. The Space only needs to read.
@@ -85,7 +89,7 @@ weights are missing is worse than one that says so.
 
 ## 6. Check it before you send the link
 
-    curl -s https://AKilalours-forge-detect.hf.space/health | python -m json.tool
+    curl -s https://Akilalourdes-forge-detect.hf.space/health | python -m json.tool
 
 Expect `text_detector_loaded: true`, `image_detector_loaded: true`, and
 `polarity_verified: true`. The Space resolves its own Linux wheels, so a version that
