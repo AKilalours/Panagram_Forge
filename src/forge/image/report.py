@@ -426,10 +426,10 @@ def _assessment(findings: list[Finding], detection) -> Assessment:
             available=True,
             verdict=detection.verdict,
             confidence=detection.ai_probability,
-            band=f"[{detection.human_ceiling:.3f}, {detection.threshold_ai:.3f})",
+            band=f"[{detection.threshold_ai:.3f}, {detection.confident_ai:.3f})",
             reason=(
-                f"AI above {detection.threshold_ai:.3f}, not AI below "
-                f"{detection.human_ceiling:.3f}, undecided between."
+                f"Not AI below {detection.threshold_ai:.3f}, AI at or above "
+                f"{detection.confident_ai:.3f}."
             ),
             # Explicitly empty. The dataclass default is the "no detector exists yet"
             # paragraph, and it was rendering next to a live verdict.

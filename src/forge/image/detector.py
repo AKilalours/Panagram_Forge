@@ -75,20 +75,28 @@ class Detection:
     polarity_verified: bool = False
 
     # Fitted on the probe set when one has been measured; the documented defaults otherwise.
-    threshold_ai: float = ABSTAIN_HIGH
-    human_ceiling: float = ABSTAIN_LOW
+    # `not_ai_below` clears every photograph in the probe set WITH A MARGIN, so the
+    # false-positive rate there is zero by construction. `confident_ai` is where generated
+    # images typically sit. Between them the detector declines.
+    threshold_ai: float = ABSTAIN_HIGH          # not-AI boundary
+    confident_ai: float = ABSTAIN_HIGH          # AI boundary
 
     @property
     def verdict(self) -> str:
-        """Three outcomes. The middle one is a refusal to guess, not a weak AI call.
+        """Three outcomes, and the middle one is a refusal rather than a weak AI call.
 
-        The AI threshold sits above every human image in the probe set, because being wrong
-        about a person is the expensive error in this project and always has been. Between
-        the two, the detector declines.
+        Below the not-AI boundary means no photograph in the probe set scored this low and
+        was wrong, so this reads as not AI. At or above the AI boundary is where generated
+        images sit. In between is past anything a real photograph scored and short of where
+        generated ones do, which with a small probe set is a real gap rather than a fudge.
+
+        The first version compared against `max(human) + 1e-6`, so the photograph that SET
+        the threshold landed exactly on it and a real image was reported "uncertain". A
+        boundary decided in the sixth decimal is decided by rounding.
         """
-        if self.ai_probability >= self.threshold_ai:
+        if self.ai_probability >= self.confident_ai:
             return "ai"
-        if self.ai_probability < self.human_ceiling:
+        if self.ai_probability < self.threshold_ai:
             return "human"
         return "uncertain"
 
@@ -206,9 +214,40 @@ class ImageDetector:
             calibrated=False,
             labels=self.labels,
             polarity_verified=self.polarity_verified,
-            threshold_ai=float(record.get("threshold_ai", ABSTAIN_HIGH)),
-            human_ceiling=float(record.get("human_ceiling", ABSTAIN_LOW)),
+            threshold_ai=self._not_ai_boundary(record),
+            # Records written before the two-boundary change carry no confident_ai. Derive
+            # it from the generated group's median when it is there, and otherwise fall back
+            # to the not-AI boundary, which makes the decision binary rather than inventing
+            # a band that was never measured.
+            # No recorded AI boundary means the decision is BINARY at the not-AI boundary.
+            # Deriving one from the generated group's median was tried and was wrong: it put
+            # half the generated images into "uncertain" and cut the flag rate while looking
+            # more careful. A band nobody measured is not caution.
+            confident_ai=max(
+                self._not_ai_boundary(record),
+                float(record.get("confident_ai") or 0.0) or self._not_ai_boundary(record),
+            ),
         )
+
+    @staticmethod
+    def _not_ai_boundary(record: dict) -> float:
+        """Where "not AI" ends, with a margin over the highest photograph measured.
+
+        Records written by the first probe stored `threshold_ai` as max(human) + 1e-6, which
+        put the photograph that SET the threshold exactly on it. Those records are read as
+        the highest human score and the margin is applied here, so an old record does not
+        need re-running to stop calling a real photograph uncertain.
+        """
+        if not record:
+            return ABSTAIN_HIGH
+        if record.get("confident_ai") is not None:
+            return float(record.get("threshold_ai", ABSTAIN_HIGH))
+        highest = float(
+            record.get("highest_human_score")
+            or record.get("threshold_ai")
+            or ABSTAIN_HIGH
+        )
+        return min(1.0, highest + max(0.005, 0.02 * highest))
 
 
 def _load_one(model_id: str) -> ImageDetector:

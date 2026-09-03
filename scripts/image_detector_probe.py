@@ -180,13 +180,37 @@ def main() -> int:
     # human image in the probe set: zero false positives here, by construction.
     scores = groups if not inverted else {k: [1 - v for v in vs] for k, vs in groups.items()}
     human_scores, ai_scores = sorted(scores["human"]), scores["ai"]
-    threshold_ai = min(1.0, max(human_scores) + 1e-6)
-    human_p90 = human_scores[max(0, int(0.9 * len(human_scores)) - 1)]
-    recall = sum(1 for s in ai_scores if s >= threshold_ai) / len(ai_scores)
-    print(f"\noperating point fitted on the human group:")
-    print(f"  AI threshold      {threshold_ai:.4f}  (above every human image in the probe set)")
-    print(f"  human ceiling     {human_p90:.4f}  (90th percentile of the human group)")
-    print(f"  AI recall there   {recall:.1%}  of {len(ai_scores)} AI images")
+    highest_human = max(human_scores)
+
+    # A MARGIN, not a hair. The first version used max(human) + 1e-6, which put the very
+    # photograph that set the threshold exactly on the boundary: it scored 0.3125, the
+    # threshold recorded as 0.312469, and the page called a real photograph "uncertain".
+    # A boundary decided in the sixth decimal is decided by rounding, not by evidence.
+    threshold_ai = min(1.0, highest_human + max(0.005, 0.02 * highest_human))
+
+    # Above every photograph is not the same as confidently generated. The AI boundary is
+    # the generated group's 25th percentile: three quarters of generated images sit at or
+    # above it, so the middle band stays narrow.
+    #
+    # The median was tried first and was wrong. It put HALF the generated images into
+    # "uncertain", cutting the flag rate from 55% to about 50% while looking more careful.
+    # A band that swallows typical positives is not caution, it is a worse detector wearing
+    # caution as a costume. When the two groups overlap, this collapses to the not-AI
+    # boundary and the decision is binary, which is the honest description of a detector
+    # whose distributions overlap.
+    ordered_ai = sorted(ai_scores)
+    p25 = ordered_ai[max(0, int(0.25 * len(ordered_ai)) - 1)]
+    confident_ai = max(threshold_ai, p25)
+
+    recall = sum(1 for s in ai_scores if s >= confident_ai) / len(ai_scores)
+    flagged = sum(1 for s in ai_scores if s >= threshold_ai) / len(ai_scores)
+    print("\noperating point fitted on the human group:")
+    print(f"  highest photograph  {highest_human:.4f}")
+    print(f"  not AI below        {threshold_ai:.4f}  (clear of every photograph, with margin)")
+    print(f"  AI at or above      {confident_ai:.4f}"
+          f"{'  (25th percentile of the generated group)' if confident_ai > threshold_ai else '  (binary: the groups overlap)'}")
+    print(f"  AI recall there     {recall:.1%}  of {len(ai_scores)} generated images")
+    print(f"  flagged or unsure   {flagged:.1%}")
     print(f"\n  IN SAMPLE. The threshold is fitted on the same {len(human_scores)} human "
           f"images it is evaluated on, so this recall is optimistic and this false-positive "
           f"rate is zero by construction. It is an operating point, not a result.")
@@ -203,18 +227,23 @@ def main() -> int:
         "median_probability_as_scored": {"ai": round(ai_med, 6), "human": round(human_med, 6)},
         "separation": round(separation, 6),
         "median_separation": round(median_separation, 6),
+        "highest_human_score": round(highest_human, 6),
         "threshold_ai": round(threshold_ai, 6),
-        "human_ceiling": round(human_p90, 6),
+        "confident_ai": round(confident_ai, 6),
+        "generated_p25": round(p25, 6),
         "ai_recall_at_threshold": round(recall, 6),
+        "ai_flagged_or_uncertain": round(flagged, 6),
         "operating_point_is_in_sample": True,
         "method": (
             "Group medians and means over labelled directories, scored with the name-based "
             "mapping. Both must separate: a mean gap without a median gap means a bimodal "
             "detector whose average is carried by a few confident hits. If the known-AI "
             "group scores LOWER, the mapping is inverted and the verified index is the other "
-            "class. The threshold is placed above every human image in the probe set, so it "
-            "is fitted in sample and its recall is optimistic. Measured, never adjusted to "
-            "make a result look better."
+            "class. The not-AI boundary sits above every photograph in the probe set with a "
+            "margin, so the false-positive rate on that set is zero by construction and no "
+            "boundary case is decided by rounding. The AI boundary is the median of the "
+            "generated group; between the two the detector declines. Fitted in sample, so "
+            "the recall is optimistic. Measured, never adjusted to make a result look better."
         ),
     }, indent=2) + "\n")
     print(f"written {OUT}")

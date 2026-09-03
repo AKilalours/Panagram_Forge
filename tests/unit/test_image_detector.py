@@ -51,16 +51,27 @@ def test_all_human_labels_are_refused_because_nothing_means_ai():
 
 
 def test_the_verdict_has_three_states_and_the_middle_one_declines():
-    """A detector at a low false-positive budget must be allowed to say "I do not know"."""
-    def verdict(p):
-        return Detection(ai_probability=p, model_id="m").verdict
+    """A detector at a low false-positive budget must be allowed to say "I do not know".
+
+    With no measurement both boundaries default to ABSTAIN_HIGH, which collapses the middle
+    band to nothing: an unmeasured detector should not be inventing a zone of uncertainty it
+    never estimated.
+    """
+    def verdict(p, low=0.30, high=0.44):
+        return Detection(ai_probability=p, model_id="m",
+                         threshold_ai=low, confident_ai=high).verdict
 
     assert verdict(0.01) == "human"
     assert verdict(0.99) == "ai"
-    assert verdict(0.5) == "uncertain"
-    assert verdict(ABSTAIN_LOW) == "uncertain", "the band is inclusive at the low edge"
-    assert verdict(ABSTAIN_HIGH) == "ai", "the band is exclusive at the high edge"
-    assert verdict(ABSTAIN_LOW - 1e-9) == "human"
+    assert verdict(0.38) == "uncertain"
+    assert verdict(0.30) == "uncertain", "the band is inclusive at the low edge"
+    assert verdict(0.44) == "ai", "the band is exclusive at the high edge"
+    assert verdict(0.30 - 1e-9) == "human"
+
+    default = Detection(ai_probability=0.5, model_id="m")
+    assert default.verdict == "human", (
+        "without a measurement the two boundaries coincide, so there is no invented band"
+    )
 
 
 def test_a_detection_never_claims_to_be_calibrated():
@@ -180,22 +191,41 @@ def test_the_visual_stream_never_claims_calibration_it_does_not_have():
 
 def test_the_verdict_uses_a_fitted_threshold_when_one_was_measured():
     """The default band is a placeholder. A measured operating point replaces it."""
-    fitted = Detection(ai_probability=0.55, model_id="m", threshold_ai=0.42, human_ceiling=0.10)
-    assert fitted.verdict == "ai", "0.55 is above a fitted threshold of 0.42"
+    fitted = Detection(ai_probability=0.55, model_id="m", threshold_ai=0.32, confident_ai=0.44)
+    assert fitted.verdict == "ai", "0.55 is above a fitted AI boundary of 0.44"
 
-    default = Detection(ai_probability=0.55, model_id="m")
-    assert default.verdict == "uncertain", "0.55 sits inside the default band"
+    default = Detection(ai_probability=0.20, model_id="m")
+    assert default.verdict == "human", "below the documented default boundary"
 
 
 def test_the_middle_band_declines_rather_than_guessing():
-    d = Detection(ai_probability=0.30, model_id="m", threshold_ai=0.42, human_ceiling=0.10)
+    d = Detection(ai_probability=0.38, model_id="m", threshold_ai=0.32, confident_ai=0.44)
     assert d.verdict == "uncertain"
 
 
-def test_the_threshold_sits_above_the_human_ceiling():
-    """Inverting them would make one of the two verdicts unreachable."""
-    d = Detection(ai_probability=0.0, model_id="m", threshold_ai=0.42, human_ceiling=0.10)
-    assert d.human_ceiling < d.threshold_ai
+def test_the_ai_boundary_is_never_below_the_not_ai_boundary():
+    """Inverting them would make one of the three verdicts unreachable."""
+    d = Detection(ai_probability=0.0, model_id="m", threshold_ai=0.32, confident_ai=0.44)
+    assert d.threshold_ai <= d.confident_ai
+
+
+def test_the_photograph_that_set_the_threshold_reads_as_not_ai():
+    """THE REGRESSION. The probe threshold was max(human) + 1e-6, so the image that defined
+    it landed exactly on the boundary and a real photograph was reported "uncertain"."""
+    highest_human = 0.3125
+    margin = max(0.005, 0.02 * highest_human)
+    d = Detection(
+        ai_probability=highest_human, model_id="m",
+        threshold_ai=highest_human + margin, confident_ai=0.4366,
+    )
+    assert d.verdict == "human", (
+        "the photograph that set the operating point must fall under it, not on it"
+    )
+
+
+def test_a_generated_image_at_the_group_median_reads_as_ai():
+    d = Detection(ai_probability=0.4366, model_id="m", threshold_ai=0.3187, confident_ai=0.4366)
+    assert d.verdict == "ai"
 
 
 def test_the_measured_detector_is_the_one_that_loads(tmp_path, monkeypatch):
