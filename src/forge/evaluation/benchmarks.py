@@ -280,15 +280,48 @@ def load_hf(repo: str, config: str | None, split: str) -> Iterator[dict]:  # pra
         yield from _parquet_conversion(repo, config, split)
 
 
-def load_raid(split: str = "extra") -> list[BenchmarkDoc]:  # pragma: no cover
-    """RAID-extra: labelled and disjoint from RAID-train. RAID-test labels are held out,
-    so a self-reported number on it is impossible; that needs a leaderboard submission."""
+def load_raid(split: str = "train", max_rows: int = 200_000) -> list[BenchmarkDoc]:  # pragma: no cover
+    """RAID, English prose domains.
+
+    THE BUG THIS FIXES. The default was "extra", chosen because it is labelled and disjoint
+    from train. RAID-extra is the EXTRA-DOMAINS split: code, czech and german. FORGE
+    excludes exactly those three as out of scope, so parse_raid correctly discarded 100% of
+    it and the run failed with "raid returned no documents". The loader was asking for the
+    one split whose entire contents this project's own policy rejects.
+
+    Confirmed by reading the data (scripts/raid_probe.py):
+
+        split 'extra' first row: model='human' domain='code'
+        split 'train' first row: model='human' domain='abstracts'
+        split 'test'           : ValueError, available splits are ['train', 'extra']
+
+    RAID-train is labelled, so self-reporting on it is possible. The held-out labels are in
+    the separate `raid_test` config, which needs a leaderboard submission.
+
+    `max_rows` stops the stream early. parse_raid materialises what it is given, and RAID's
+    train split is millions of rows; without a cap, streaming is defeated and a 4,000
+    document sample costs a full download. The cap is applied BEFORE domain filtering, so
+    it bounds work rather than changing which documents are eligible.
+    """
     if split == "test":
         raise ValueError(
-            "RAID-test labels are held out. Self-reporting on it is impossible; "
-            "submit to the leaderboard instead. See data_spec_v1 section 1.1."
+            "RAID has no test split in the `raid` config; the held-out labels live in the "
+            "`raid_test` config and need a leaderboard submission. "
+            "Available: train, extra. See data_spec_v1 section 1.1."
         )
-    return parse_raid(load_hf("liamdugan/raid", None, split))
+    return parse_raid(_take(load_hf("liamdugan/raid", "raid", split), max_rows))
+
+
+def _take(rows: Iterator[dict], limit: int) -> Iterator[dict]:  # pragma: no cover
+    """Stop a stream after `limit` rows.
+
+    Without this, `rows = list(rows)` inside every parser reads the entire split before a
+    single document is sampled, which turns a streaming loader into a full download.
+    """
+    for i, row in enumerate(rows):
+        if i >= limit:
+            return
+        yield row
 
 
 def load_mage(split: str = "test") -> list[BenchmarkDoc]:  # pragma: no cover
