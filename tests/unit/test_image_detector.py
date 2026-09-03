@@ -250,3 +250,71 @@ def test_without_a_record_the_candidate_order_still_applies(tmp_path, monkeypatc
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("FORGE_IMAGE_DETECTOR", raising=False)
     assert D.measured_model_id() is None
+
+
+def _png_with(text_chunks: dict) -> bytes:
+    """A PNG carrying tEXt metadata, the way a generator writes its marker."""
+    import io
+
+    import pytest as _pytest
+
+    _pytest.importorskip("PIL")
+    from PIL import Image
+    from PIL.PngImagePlugin import PngInfo
+
+    info = PngInfo()
+    for key, value in text_chunks.items():
+        info.add_text(key, value)
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 64), (90, 120, 60)).save(buffer, format="PNG", pnginfo=info)
+    return buffer.getvalue()
+
+
+def test_a_declared_image_is_called_ai_even_when_the_detector_disagrees():
+    """THE REGRESSION. A ChatGPT image declared itself generated and the page said
+    NO AI DETECTED at 1.5%, because a baseline detector was allowed to overrule a label
+    the generator wrote about its own output."""
+    from forge.image.report import build_report
+
+    data = _png_with({"parameters": "a photo of a cat", "sampler": "Euler a"})
+    report = build_report(data, with_detector=False)
+    assert report.assessment.available is True
+    assert report.assessment.verdict == "ai"
+    assert "declared" in report.assessment.reason.lower()
+
+
+def test_a_declaration_does_not_need_a_detector_at_all():
+    """It is a label, not an inference. It stands alone."""
+    from forge.image.report import build_report
+
+    report = build_report(_png_with({"parameters": "x", "cfg scale": "7"}), with_detector=False)
+    assert report.assessment.verdict == "ai"
+    assert report.detector.get("available") is not True
+
+
+def test_absence_of_a_declaration_never_produces_a_human_verdict():
+    """THE ASYMMETRY. Most generators write no marker and every editor strips metadata.
+
+    Reading absence as evidence of human authorship is the same false-positive engine this
+    project exists to avoid, pointed the other way.
+    """
+    from forge.image.report import build_report
+
+    report = build_report(_png_with({"Comment": "holiday photo"}), with_detector=False)
+    assert report.assessment.available is False, "absence of a marker decided a verdict"
+    assert report.assessment.verdict is None
+
+
+def test_the_filename_plays_no_part_in_the_verdict():
+    """Renaming a file cannot change the answer. Pixels and bytes only."""
+    from forge.image.report import build_report
+
+    data = _png_with({"parameters": "x", "sampler": "Euler"})
+    honest = build_report(data, filename="ChatGPT Image.png", with_detector=False)
+    renamed = build_report(data, filename="IMG_0042.JPG", with_detector=False)
+    assert honest.assessment.verdict == renamed.assessment.verdict == "ai"
+
+    plain = _png_with({"Comment": "x"})
+    a = build_report(plain, filename="ai_generated_fake.png", with_detector=False)
+    b = build_report(plain, filename="my_holiday.png", with_detector=False)
+    assert a.assessment.verdict == b.assessment.verdict is None

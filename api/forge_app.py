@@ -464,10 +464,13 @@ async function sendImage(f){
 // fire hardest on screenshots and re-saved photographs, which are exactly the innocent
 // files this project exists to protect.
 function banner(o){
+  // A declared verdict carries no probability: the marker is a label, not a score. The
+  // gauge is hidden rather than filled with an invented number.
   const pending = !o.available;
-  const pct = pending ? null : (o.probability*100);
+  const hasScore = o.probability !== null && o.probability !== undefined;
+  const pct = (pending || !hasScore) ? null : (o.probability*100);
   const cls = pending ? 'pending' : (o.verdict==='ai'?'hot':o.verdict==='human'?'ok':'warn');
-  const pos = pending ? 50 : Math.min(100, Math.max(0, pct));
+  const pos = pct===null ? 50 : Math.min(100, Math.max(0, pct));
   // "NO AI DETECTED", never "HUMAN". A detector cannot establish that a person made
   // something; it can only report whether the input looks like the AI distribution it was
   // trained on. "Human" is a claim about the world, "no AI detected" is a claim about the
@@ -483,9 +486,10 @@ function banner(o){
     </div>
     <div class="scorebox">
       <div class="scorelabel">${esc(o.score_label||'AI probability')}</div>
-      <div class="score ${pending?'na':''}">${pending?'not available':pct.toFixed(1)+'%'}</div>
-      <div class="gauge"><div class="needle" style="left:${pos}%"></div></div>
-      <div class="gaugeends"><span>human</span><span>uncertain</span><span>AI</span></div>
+      <div class="score ${pct===null?'na':''}">${pct===null
+        ?(pending?'not available':'declared'):pct.toFixed(1)+'%'}</div>
+      ${pct===null?'':`<div class="gauge"><div class="needle" style="left:${pos}%"></div></div>
+      <div class="gaugeends"><span>human</span><span>uncertain</span><span>AI</span></div>`}
       <div class="scorenote">${esc(o.score_note||'')}</div>
     </div></div>`;
 }
@@ -510,7 +514,7 @@ function renderImage(d){
     probability: a.confidence,
     reason: a.reason,
     score_label: 'AI probability',
-    score_note: a.available ? '' : esc(a.detail||''),
+    score_note: a.available ? esc(a.detail||'') : esc(a.detail||''),
   }) + `<div class="grid">`;
 
   h+=`<div class="card"><h3>Image</h3>
