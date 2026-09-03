@@ -327,6 +327,11 @@ details.fold .sum{margin-left:auto;text-transform:none;letter-spacing:0;font-wei
 .secondary:hover{border-color:var(--accent);color:var(--accent)}
 .warnpill{background:var(--warn);color:#fff;margin-left:9px;font-size:10px;
  letter-spacing:.05em;vertical-align:middle}
+.attr{display:grid;grid-template-columns:minmax(220px,340px) 1fr;gap:20px;align-items:start;
+ margin-top:12px}
+.attr img{width:100%;border-radius:9px;border:1px solid var(--line);display:block}
+@media(max-width:720px){.attr{grid-template-columns:1fr}}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:9px}
 .maps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
 .maps figure{margin:0}
 .maps img{width:100%;border-radius:7px;border:1px solid var(--line);display:block;
@@ -531,8 +536,8 @@ function renderImage(d){
     verdict: a.verdict,
     probability: a.confidence,
     reason: a.reason,
-    score_label: 'AI probability',
-    score_note: a.available ? esc(a.detail||'') : esc(a.detail||''),
+    score_label: a.confidence==null ? 'Determination' : 'AI probability',
+    score_note: a.detail||'',
   }) + `<div class="grid">`;
 
   h+=`<div class="card"><h3>Image</h3>
@@ -547,8 +552,7 @@ function renderImage(d){
     <span class="v"><span class="pill ${cls(ev.conflict)}">${
       ev.conflict==='low'?'consistent':esc(ev.conflict)}</span></span></div>
     ${ev.conflict!=='low'?`<p class="caveat">${esc(ev.conflict_reason)}</p>`:''}
-    <p class="caveat">Only the detector decides. The other signals describe the file and
-    none of them establishes authorship.</p></div>`;
+    </div>`;
 
   h+=`<div class="card"><h3>File signals</h3>${rows(d.authenticity)}</div>`;
 
@@ -559,34 +563,54 @@ function renderImage(d){
   if(R.length){
     const held=R.filter(r=>!r.error&&!r.changed).length, n=R.filter(r=>!r.error).length;
     h+=`<div class="card wide"><h3>Robustness
-      <span class="sum">${held} of ${n} transforms hold the verdict</span></h3>
-      <div class="chips">${R.map(r=>r.error
+      <span class="sum">${held} of ${n} edits keep the same verdict</span></h3>
+      <p class="caveat" style="margin:0 0 12px">Every edit is re-scored and compared with the
+      original. "flipped" means that edit changes the answer.</p>
+      <div class="rgrid">${R.map(r=>r.error
         ?`<div class="chip"><div class="n">${esc(r.attack)}</div>
           <div class="d">failed</div></div>`
         :`<div class="chip"><div class="n">${esc(r.attack)}
           <span class="pill ${r.changed?'hot':'ok'}">${r.changed?'flipped':'held'}</span></div>
           <div class="d">${(r.ai_probability*100).toFixed(1)}%${r.attack==='original'?''
-            :` · ${r.delta>=0?'+':''}${(r.delta*100).toFixed(1)}</div>`}</div>`).join('')}</div>
-      <p class="caveat">Each transform is re-scored and compared with the original. A
-      flipped chip means that edit changes the answer.</p></div>`;
+            :` · ${r.delta>=0?'+':''}${(r.delta*100).toFixed(1)} pts`}</div></div>`).join('')}
+      </div></div>`;
+  }
+
+  // ATTRIBUTION, from the detector itself. Each region is hidden and the image re-scored:
+  // a warm cell is one the decision rested on. The old panel here showed compression and
+  // noise statistics, which know nothing about the model and were read as if they did.
+  const attr=d.attribution_map;
+  if(attr&&attr.image){
+    h+=`<div class="card wide"><h3>What the verdict rests on
+      <span class="sum">${attr.grid}×${attr.grid} occlusion</span></h3>
+      <div class="attr"><img src="${attr.image}" alt="attribution map">
+        <div><p class="caveat">${esc(attr.reading)}</p>
+        <div class="row"><span class="k">Score with everything visible</span>
+          <span class="v">${(attr.base_probability*100).toFixed(1)}%</span></div>
+        <div class="row"><span class="k">Largest single drop when hidden</span>
+          <span class="v">${(attr.peak.drop*100).toFixed(1)} pts</span></div>
+        <p class="caveat">Measured by hiding each region and re-scoring, not by a gradient
+        approximation, so it holds for any detector this project loads.</p></div></div></div>`;
   }
 
   const maps=d.maps||[];
   if(maps.length){
-    h+=`<details class="card wide fold"><summary>Forensic maps</summary>
+    h+=`<details class="card wide fold"><summary>Pixel diagnostics
+      <span class="sum">not attribution</span></summary>
       <div class="foldbody">
       <div class="maps">${maps.map(m=>`<figure>
         <img src="${m.image}" alt="${esc(m.title)}">
         <figcaption><b>${esc(m.title)}</b><br>${esc(m.short||m.what_it_shows)}</figcaption>
         </figure>`).join('')}</div>
-      <p class="caveat">Pixel diagnostics, normalized within this image. They describe the
-      file; the detector above decides.</p></div></details>`;
+      <p class="caveat">Statistics of the file, computed without any model. They are not
+      what the detector looked at; the panel above is.</p></div></details>`;
   }
 
   const T=d.timings_ms||{}, order=['preview','detector','forensics','perceptual_hash',
-    'evidence','forensic_maps','detector_robustness'];
+    'evidence','attribution','forensic_maps','detector_robustness'];
   const NAME={preview:'Preview',detector:'Detector inference',forensics:'Forensic analysis',
-    perceptual_hash:'Perceptual hash',evidence:'Evidence engine',forensic_maps:'Forensic maps',
+    perceptual_hash:'Perceptual hash',evidence:'Evidence engine',
+    attribution:'Attribution map',forensic_maps:'Pixel diagnostics',
     detector_robustness:'Robustness'};
   h+=`<details class="card wide fold"><summary>Details
       <span class="sum">${(d.elapsed_ms/1000).toFixed(1)} s on CPU</span></summary>

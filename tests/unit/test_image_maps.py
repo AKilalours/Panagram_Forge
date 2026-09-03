@@ -225,3 +225,71 @@ def test_a_format_needing_a_decoder_is_named_rather_than_called_unreadable():
 
     assert "HEIC" in NEEDS_DECODER
     assert "pillow-heif" in NEEDS_DECODER["HEIC"]
+
+
+class _Processor:
+    def __call__(self, images, return_tensors="pt"):
+        import numpy as np
+        import torch
+
+        a = np.asarray(images.resize((32, 32)), dtype="float32") / 255.0
+        return {"pixel_values": torch.tensor(a).permute(2, 0, 1).unsqueeze(0)}
+
+
+class _Model:
+    """Only the top-left quadrant moves this model's output."""
+
+    def __call__(self, pixel_values):
+        import torch
+
+        corner = pixel_values[:, :, :12, :12].mean(dim=(1, 2, 3))
+        logits = torch.stack([corner * 12.0, torch.zeros_like(corner)], dim=-1)
+        return type("O", (), {"logits": logits})()
+
+
+class _FakeDetector:
+    """A detector with a planted dependency on one region.
+
+    Hiding the top-left quadrant should collapse the score; hiding anything else should not.
+    A map that cannot recover a dependency this obvious recovers nothing.
+    """
+
+    ai_index = 0
+    processor = _Processor()
+    model = _Model()
+
+
+def test_occlusion_finds_the_region_the_decision_rests_on():
+    pytest.importorskip("torch")
+    """THE POINT OF THE PANEL. A map that cannot find a planted dependency is decoration."""
+    from forge.image.attribution import occlusion_attribution
+
+    built = occlusion_attribution(_FakeDetector(), _frame(flatten_patch=False, size=256), grid=4)
+    assert built is not None
+    assert built.peak["row"] == 0 and built.peak["col"] == 0, (
+        f"the map points at {built.peak}, not the top-left region the model actually uses"
+    )
+    assert built.peak["drop"] > 0
+
+
+def test_the_map_reports_the_score_it_started_from():
+    pytest.importorskip("torch")
+    from forge.image.attribution import occlusion_attribution
+
+    built = occlusion_attribution(_FakeDetector(), _frame(flatten_patch=False, size=256), grid=3)
+    assert 0.0 <= built.base_probability <= 1.0
+    assert len(built.cells) == 3 and len(built.cells[0]) == 3
+    assert built.png_data_uri.startswith("data:image/png;base64,")
+
+
+def test_a_detector_that_raises_gives_no_map_rather_than_no_report():
+    pytest.importorskip("torch")
+    from forge.image.attribution import occlusion_attribution
+
+    class Broken:
+        ai_index = 0
+
+        def processor(self, **_):
+            raise RuntimeError("no")
+
+    assert occlusion_attribution(Broken(), _frame(flatten_patch=False)) is None
