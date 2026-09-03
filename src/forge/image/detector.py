@@ -127,6 +127,30 @@ def resolve_ai_index(id2label: dict) -> int:
 POLARITY_RECORD = "reports/experiments/image_detector_polarity.json"
 
 
+def measured_model_id() -> str | None:
+    """Which detector has actually been measured, if any.
+
+    The polarity record names a model. Nothing used to make the app LOAD that model, so a
+    probe could measure umm-maybe while the server quietly served Organika, the first
+    candidate in the list. The record then did not match the loaded model, was correctly
+    ignored, and the page said "polarity not verified" forever while a measurement sat on
+    disk. Two sources of truth with no link between them.
+
+    A measured detector outranks the candidate order. That is the whole point of measuring.
+    """
+    import json
+    import pathlib
+
+    path = pathlib.Path(POLARITY_RECORD)
+    if not path.exists():
+        return None
+    try:
+        model_id = json.loads(path.read_text()).get("model_id")
+    except Exception:  # noqa: BLE001 - an unreadable record names nothing
+        return None
+    return model_id if isinstance(model_id, str) and model_id else None
+
+
 def verified_polarity(model_id: str) -> dict | None:
     """The measured AI index for this model, if it has been measured.
 
@@ -226,6 +250,13 @@ def load_detector() -> ImageDetector:
         # Named explicitly: try that and only that. A silent fallback to a different model
         # would mean the report names one detector and a different one produced the score.
         return _load_one(named)
+
+    measured = measured_model_id()
+    if measured:
+        # A measured detector outranks the candidate order. Loading an unmeasured model
+        # while a measurement exists on disk is how the page ended up saying "polarity not
+        # verified" with a completed probe sitting next to it.
+        return _load_one(measured)
 
     failures = []
     for model_id in CANDIDATES:

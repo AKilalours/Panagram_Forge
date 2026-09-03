@@ -196,3 +196,57 @@ def test_the_threshold_sits_above_the_human_ceiling():
     """Inverting them would make one of the two verdicts unreachable."""
     d = Detection(ai_probability=0.0, model_id="m", threshold_ai=0.42, human_ceiling=0.10)
     assert d.human_ceiling < d.threshold_ai
+
+
+def test_the_measured_detector_is_the_one_that_loads(tmp_path, monkeypatch):
+    """THE REGRESSION. A probe measured one model while the server served another.
+
+    The record named umm-maybe; the loader walked its candidate list and got Organika,
+    which had already FAILED the probe. The record did not match, was correctly ignored,
+    and the page reported "polarity not verified" with a finished measurement on disk.
+    """
+    import json
+
+    import forge.image.detector as D
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FORGE_IMAGE_DETECTOR", raising=False)
+    record = tmp_path / D.POLARITY_RECORD
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"model_id": "measured/model", "verified_ai_index": 1}))
+    assert D.measured_model_id() == "measured/model"
+
+    loaded = []
+    monkeypatch.setattr(D, "_load_one", lambda m: loaded.append(m) or "detector")
+    D.load_detector.cache_clear()
+    D.load_detector()
+    assert loaded == ["measured/model"], f"loaded {loaded} instead of the measured model"
+    D.load_detector.cache_clear()
+
+
+def test_an_explicit_model_still_outranks_the_measured_one(tmp_path, monkeypatch):
+    """Someone naming a model is probing it. Overriding that would defeat the probe."""
+    import json
+
+    import forge.image.detector as D
+
+    monkeypatch.chdir(tmp_path)
+    record = tmp_path / D.POLARITY_RECORD
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"model_id": "measured/model", "verified_ai_index": 1}))
+    monkeypatch.setenv("FORGE_IMAGE_DETECTOR", "explicit/model")
+
+    loaded = []
+    monkeypatch.setattr(D, "_load_one", lambda m: loaded.append(m) or "detector")
+    D.load_detector.cache_clear()
+    D.load_detector()
+    assert loaded == ["explicit/model"]
+    D.load_detector.cache_clear()
+
+
+def test_without_a_record_the_candidate_order_still_applies(tmp_path, monkeypatch):
+    import forge.image.detector as D
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FORGE_IMAGE_DETECTOR", raising=False)
+    assert D.measured_model_id() is None
