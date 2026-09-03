@@ -1,0 +1,15 @@
+{
+  "observed_difference": 0.0403,
+  "ci95": [
+    0.029,
+    0.0513
+  ],
+  "fraction_of_resamples_where_the_gap_reverses": 0.0,
+  "resamples": 10000,
+  "note": "paired: both arms are scored on the same resampled documents, because they score the same benchmark and their errors are correlated",
+  "benchmark": "mage",
+  "auroc": {
+    "random": 0.5877,
+    "mirror": 0.6279
+  }
+}

@@ -66,39 +66,100 @@ itself to hit 0.1% FPR there. That refit threshold is optimistic and is not avai
 production; it is reported only so that the two arms can be compared at the same operating
 point rather than at two different ones.
 
-### Significance
+The deployed FPR column is the reason the last column exists. The two arms do **not** sit at
+the same operating point out of distribution: on HC3 arm A spends 0.55% of the human budget
+and arm B spends 2.4%. Their deployed FNRs are therefore not comparable to each other, and
+no test is run on them.
 
-Paired bootstrap, 10,000 resamples. Both arms score the same documents, so their errors are
-correlated; the resample is over **documents**, with both arms recomputed on each resample.
+### Significance, and a test that had to be thrown out
+
+Two tests are run, both paired, because both arms score the identical documents.
+
+**AUROC, paired bootstrap, 10,000 resamples.** The resample is over documents, with both
+arms recomputed on each one.
 
 | Benchmark | AUROC(B) - AUROC(A) | 95% CI | Resamples where the sign reverses |
 |---|---|---|---|
 | HC3 | +0.2269 | [0.2125, 0.2413] | 0.0% |
-| MAGE | +0.0403 | | 0.0% |
-| RAID | **-0.0028** | | **72.7%** |
+| MAGE | +0.0403 | [0.0290, 0.0513] | 0.0% |
+| RAID | **-0.0028** | [-0.0116, 0.0061] | **72.7%** |
+
+**Misses at a matched budget, McNemar.** Each arm's threshold is re-fit on the benchmark so
+that both spend the same human false-positive allowance, two documents out of 2,000. The
+table counts AI documents where the arms disagree.
+
+| Benchmark | A misses | B misses | A misses, B catches | A catches, B misses | McNemar exact p |
+|---|---|---|---|---|---|
+| HC3 | 1,939 | 1,859 | **119** | 39 | 1.3e-10 |
+| MAGE | 1,965 | 1,956 | 28 | 19 | **0.243** |
+| RAID | 1,627 | 1,514 | **122** | 9 | 1.9e-26 |
+
+**A previous version of this section reported the wrong thing.** `ood_table.py` ran a
+two-proportion z-test on each arm's FNR at its *own* deployed threshold and wrote
+`significant_at_0.05: true` for all three benchmarks. That was wrong twice. The arms sat at
+different operating points, 0.55% against 2.4% FPR on HC3, so an arm allowed to be four
+times more trigger-happy was being credited for missing less; and the z-test assumes
+independent samples when both arms score identical documents. Re-tested properly, **MAGE is
+not significant, p = 0.243**, against the p = 0.0 the old test printed. The verdict was an
+artefact of the test. `ood_table.py` now emits description and no verdict; adjudication
+lives in `scripts/ood_mcnemar.py` and `scripts/ood_significance.py`.
 
 ### The reading
 
-**"Mirrors give better AUROC" is not the claim the data supports.** On RAID the two arms are
-tied, with the control arm marginally ahead, and the sign reverses in nearly three quarters
-of resamples. The AUROC gap is large on HC3, small on MAGE, and absent on RAID, which tracks
-how far each benchmark sits from the four training generator families rather than anything
-about mirroring.
+**"Mirrors give better AUROC" is not the claim the data supports.** On RAID the arms are
+tied, the control arm marginally ahead, and the sign reverses in nearly three quarters of
+resamples.
 
-**The claim the data does support is in the last column.** At a matched 0.1% false-positive
-budget the mirror arm misses less AI text on all three benchmarks: 0.9295 against 0.9695 on
-HC3, 0.9780 against 0.9825 on MAGE, 0.7570 against 0.8135 on RAID. So: matched mirrors help
-at the low-false-positive operating point, consistently across three unseen benchmarks, while
-AUROC agreement varies by benchmark distance. That is narrower than the headline and it is
-the part that survives.
+**"Mirrors help at a matched budget on all three benchmarks" is also not the claim.** It
+holds on HC3 and RAID, decisively. On MAGE the whole difference is 28 documents against 19,
+p = 0.243, which is nine documents of noise.
+
+**What survives is narrower and more interesting than either.** On RAID the two arms have
+the same AUROC to within noise, and yet at a 0.1% false-positive budget the mirror arm
+catches 122 AI documents the control misses while losing only 9 in the other direction. A
+detector is deployed at one threshold in the far tail of the human score distribution, and
+AUROC averages over every threshold, so two models can rank equally well overall while
+behaving very differently in the only region anyone operates in. **Failure-driven mirroring
+moved the low-false-positive tail without moving the ranking.** That is the finding, it
+is invisible to AUROC, and it is why the matched-budget test had to exist.
 
 Reporting only the HC3 AUROC would be the more flattering half of a true statement, which is
 its own kind of dishonesty.
 
-**Neither arm is deployable out of distribution.** At the deployed threshold both miss 63% to
-96% of AI documents, against 0.43% to 0.72% in distribution. A detector trained on four
-families at 1.7B to 3.8B parameters does not transfer, and no amount of arm-versus-arm
-difference changes that. Closing that gap is what arms C and D are for.
+### Calibration does not degrade under shift, it collapses
+
+| | in distribution | HC3 | MAGE | RAID |
+|---|---|---|---|---|
+| A: random | 0.0045 | 0.423 | 0.441 | 0.372 |
+| B: mirrors | 0.0037 | **0.183** | 0.381 | 0.354 |
+
+ECE rises by two orders of magnitude the moment the generator is unfamiliar. The model does
+not merely become less accurate off distribution, it stays loudly confident while becoming
+wrong, which is the failure mode that matters most for a product that has to abstain. The
+mirror arm is consistently the less broken of the two and is less than half as miscalibrated
+on HC3. Neither is usable.
+
+### Neither arm is deployable out of distribution
+
+At the deployed threshold both miss 63% to 96% of AI documents, against 0.43% to 0.72% in
+distribution. A detector trained on four families at 1.7B to 3.8B parameters does not
+transfer. No arm-versus-arm difference changes that, and closing the gap is what arms C and
+D are for.
+
+### Limits of this evaluation
+
+**The budget is two documents.** 0.1% of 2,000 human documents is a two-document allowance,
+so every matched threshold sits on the third-highest human score. The resolution is coarse
+and a larger benchmark sample would tighten it.
+
+**Window aggregation is barely exercised.** HC3 produced 4,093 windows over 4,000 documents,
+so 98% of documents are a single window and mean equals max for them. The claim that max
+pooling inflates FPR on long documents is not tested by these runs; it is carried over from
+the in-distribution work and stays a stated expectation, not a measured one here.
+
+**The re-fit threshold is not available at deployment.** It is used only to put the arms at
+the same operating point. Nothing in the matched-budget table describes what a user would
+get.
 
 ## What made these numbers trustworthy enough to report at all
 

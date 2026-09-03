@@ -1,0 +1,95 @@
+{
+  "hc3": {
+    "budget": 0.001,
+    "allowed_human_fp": 2,
+    "threshold": {
+      "random": 0.999646664,
+      "mirror": 0.999767601
+    },
+    "human_fp_spent": {
+      "random": 2,
+      "mirror": 2
+    },
+    "n_ai": 2000,
+    "ai_misses": {
+      "random": 1939,
+      "mirror": 1859
+    },
+    "discordant": {
+      "random_miss_mirror_catch": 119,
+      "random_catch_mirror_miss": 39
+    },
+    "concordant": {
+      "both_miss": 1820,
+      "both_catch": 22
+    },
+    "mcnemar": {
+      "chi2": 39.5,
+      "p": 3.281e-10,
+      "exact_p": 1.312e-10
+    },
+    "test": "McNemar on the same AI documents, at a threshold re-fit per arm to spend the SAME human false-positive budget. Replaces the two-proportion z-test, which compared FNRs at two different operating points and assumed the two arms were independent samples when they score identical documents."
+  },
+  "mage": {
+    "budget": 0.001,
+    "allowed_human_fp": 2,
+    "threshold": {
+      "random": 0.99957341,
+      "mirror": 0.99986124
+    },
+    "human_fp_spent": {
+      "random": 2,
+      "mirror": 2
+    },
+    "n_ai": 2000,
+    "ai_misses": {
+      "random": 1965,
+      "mirror": 1956
+    },
+    "discordant": {
+      "random_miss_mirror_catch": 28,
+      "random_catch_mirror_miss": 19
+    },
+    "concordant": {
+      "both_miss": 1937,
+      "both_catch": 16
+    },
+    "mcnemar": {
+      "chi2": 1.362,
+      "p": 0.2432,
+      "exact_p": 0.243
+    },
+    "test": "McNemar on the same AI documents, at a threshold re-fit per arm to spend the SAME human false-positive budget. Replaces the two-proportion z-test, which compared FNRs at two different operating points and assumed the two arms were independent samples when they score identical documents."
+  },
+  "raid": {
+    "budget": 0.001,
+    "allowed_human_fp": 2,
+    "threshold": {
+      "random": 0.98517704,
+      "mirror": 0.8956348
+    },
+    "human_fp_spent": {
+      "random": 2,
+      "mirror": 2
+    },
+    "n_ai": 2000,
+    "ai_misses": {
+      "random": 1627,
+      "mirror": 1514
+    },
+    "discordant": {
+      "random_miss_mirror_catch": 122,
+      "random_catch_mirror_miss": 9
+    },
+    "concordant": {
+      "both_miss": 1505,
+      "both_catch": 364
+    },
+    "mcnemar": {
+      "chi2": 95.756,
+      "p": 1.3e-22,
+      "exact_p": 1.873e-26
+    },
+    "test": "McNemar on the same AI documents, at a threshold re-fit per arm to spend the SAME human false-positive budget. Replaces the two-proportion z-test, which compared FNRs at two different operating points and assumed the two arms were independent samples when they score identical documents."
+  }
+}
