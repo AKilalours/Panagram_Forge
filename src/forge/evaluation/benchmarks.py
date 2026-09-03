@@ -11,9 +11,14 @@ tested; the download is not.
 
 Three per-dataset traps, each of which produces a believable but wrong result:
 
-  MAGE polarity. The card says label 1 means machine-generated; the original
-  DeepfakeTextDetect release used the opposite convention in places. An inverted label
-  turns an AUROC of 0.05 into a reported 0.95 and nothing crashes. Asserted at load.
+  MAGE polarity. MEASURED, not assumed: label 0 is MACHINE, label 1 is HUMAN. This file
+  originally guessed the opposite. scripts/mage_polarity_probe.py resolved it from the
+  data, tabulating label against the `src` field over 6,000 rows: every label-0 source
+  names a generator (eli5_machine_continuation_flan_t5_base, ..._text-davinci-003,
+  ..._gpt-3.5-turbo) and every label-1 source names a human corpus (hswag_human,
+  xsum_human, yelp_human). 100% against 0%, no overlap.
+  An inverted label turns an AUROC of 0.05 into a reported 0.95 and nothing crashes, which
+  is why the polarity is asserted at load rather than trusted.
 
   HC3 shape. `human_answers` and `chatgpt_answers` are LISTS. One row expands to several
   documents, so row counts are not document counts, and every document from one question
@@ -37,6 +42,9 @@ RAID_COLUMNS = {
     "attack", "domain", "title", "prompt", "generation",
 }
 MAGE_COLUMNS = {"text", "label", "src"}
+# MEASURED from the src field over 6,000 rows, not taken from the dataset card.
+# See the module docstring and scripts/mage_polarity_probe.py.
+MAGE_MACHINE_LABEL = 0
 HC3_COLUMNS = {"id", "question", "human_answers", "chatgpt_answers", "source"}
 
 # English natural language only. FORGE v1 is not a code or multilingual detector, and
@@ -125,7 +133,14 @@ def parse_raid(
 
 # --------------------------------------------------------------------------- MAGE
 
-def parse_mage(rows: Iterable[dict], machine_label: int = 1) -> list[BenchmarkDoc]:
+def parse_mage(rows: Iterable[dict], machine_label: int = MAGE_MACHINE_LABEL) -> list[BenchmarkDoc]:
+    """MAGE rows to documents. `machine_label` defaults to the MEASURED convention.
+
+    It was 1, which is backwards, and the run that caught it was the first time any score
+    was computed on this benchmark. Nothing before that point could have noticed: the
+    parser was self-consistent, the schema check passed, and the counts looked healthy.
+    Only comparing scores against labels exposed it.
+    """
     rows = list(rows)
     if rows:
         _require_columns(rows[0].keys(), MAGE_COLUMNS, "MAGE")

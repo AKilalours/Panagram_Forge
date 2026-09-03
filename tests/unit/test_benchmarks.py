@@ -73,13 +73,37 @@ def test_a_changed_upstream_schema_fails_loudly():
 
 # ------------------------------------------------------------------------ MAGE
 
-def test_mage_machine_label_maps_to_one():
-    docs = parse_mage([{"text": "a", "label": 1, "src": "gpt"}, {"text": "b", "label": 0, "src": "human"}])
-    assert docs[0].label == 1 and docs[1].label == 0
+def test_mage_label_zero_is_machine():
+    """THIS TEST USED TO ASSERT THE OPPOSITE, AND THAT IS WHY NOTHING CAUGHT THE BUG.
+
+    It read `test_mage_machine_label_maps_to_one` and locked in the guess that MAGE's
+    label 1 means machine. The guess was wrong, and the test made it permanent: every run
+    was green while the parser inverted every MAGE label.
+
+    A test written from an assumption does not verify the assumption. It preserves it, and
+    it converts a question nobody checked into a fact nobody can question. The fixture even
+    used src values "gpt" and "human", which look like evidence and were invented here
+    rather than read from the dataset.
+
+    The convention is now MEASURED over 6,000 real rows: every label-0 src names a
+    generator, every label-1 src names a human corpus, 100% against 0%. See
+    scripts/mage_polarity_probe.py.
+    """
+    docs = parse_mage([
+        {"text": "a", "label": 0, "src": "eli5_machine_continuation_flan_t5_base"},
+        {"text": "b", "label": 1, "src": "xsum_human"},
+    ])
+    assert docs[0].label == 1, "MAGE label 0 is machine-generated"
+    assert docs[1].label == 0, "MAGE label 1 is human"
 
 
-def test_mage_inverted_convention_can_be_flipped_explicitly():
-    docs = parse_mage([{"text": "a", "label": 0, "src": "gpt"}], machine_label=0)
+def test_mage_convention_can_still_be_overridden_explicitly():
+    """The override stays, because a dataset can be republished with a new convention.
+
+    What changed is the DEFAULT, and that the default is now a measurement rather than a
+    guess.
+    """
+    docs = parse_mage([{"text": "a", "label": 1, "src": "gpt"}], machine_label=1)
     assert docs[0].label == 1
 
 
@@ -195,3 +219,50 @@ def test_contamination_raises_rather_than_being_a_footnote():
     rep = check("raid", [("t1", TRAIN_TEXT)], [("e1", TRAIN_TEXT)])
     with pytest.raises(RuntimeError, match="contaminated"):
         rep.raise_if_contaminated()
+
+
+def test_mage_machine_label_is_zero_as_measured() -> None:
+    """THE BUG THIS FILE'S MODULE DOCSTRING PREDICTED, AND GOT BACKWARDS.
+
+    parse_mage defaulted to machine_label=1. MAGE uses 0 for machine and 1 for human,
+    measured over 6,000 rows by tabulating the label against the `src` field: every label-0
+    source names a generator (eli5_machine_continuation_flan_t5_base,
+    eli5_machine_specified_text-davinci-003) and every label-1 source names a human corpus
+    (hswag_human, xsum_human, yelp_human). 100% against 0%.
+
+    Nothing before the first scored run could have caught this. The parser was
+    self-consistent, the schema check passed, the counts were healthy. An inverted label
+    only shows up when scores meet labels, which is why assert_mage_polarity exists and why
+    it stopped the evaluation rather than reporting a number.
+    """
+    from forge.evaluation.benchmarks import MAGE_MACHINE_LABEL, parse_mage
+
+    assert MAGE_MACHINE_LABEL == 0
+
+    rows = [
+        {"text": "generated text", "label": 0, "src": "eli5_machine_continuation_flan_t5_base"},
+        {"text": "a person wrote this", "label": 1, "src": "xsum_human"},
+    ]
+    docs = parse_mage(rows)
+    by_src = {d.meta["src"]: d.label for d in docs}
+    assert by_src["eli5_machine_continuation_flan_t5_base"] == 1, "generator row must be AI"
+    assert by_src["xsum_human"] == 0, "human-corpus row must be human"
+
+
+def test_the_polarity_guard_accepts_a_detector_that_works() -> None:
+    """The accepting side. A guard that only ever fires is not a guard.
+
+    Without this, flipping the default to silence the failure would look like a fix even if
+    assert_mage_polarity had been broken into always raising.
+    """
+    from forge.evaluation.benchmarks import assert_mage_polarity, parse_mage
+
+    rows = [
+        {"text": "gen", "label": 0, "src": "eli5_machine_continuation_t0_11b"},
+        {"text": "gen2", "label": 0, "src": "yelp_machine_specified_gpt-3.5-trubo"},
+        {"text": "human", "label": 1, "src": "xsum_human"},
+        {"text": "human2", "label": 1, "src": "wp_human"},
+    ]
+    docs = parse_mage(rows)
+    scores = [0.93 if d.label == 1 else 0.04 for d in docs]
+    assert_mage_polarity(docs, scores)          # must not raise
