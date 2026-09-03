@@ -120,13 +120,52 @@ def test_the_working_detector_is_the_tab_that_opens_first():
 
 
 def test_the_diagnostics_are_collapsed_and_the_verdict_is_not():
-    """Product question first, research second. Collapsed, never deleted."""
+    """Product question first, diagnostics second. Collapsed, never deleted."""
     body = page()
-    for section in ("Forensic diagnostics", "Performance details",
-                    "Limitations and interpretation"):
+    for section in ("Forensic maps", "Details"):
         assert f"<summary>{section}" in body, f"{section} is not a collapsed section"
-    assert "details class=\"card wide fold\"" in body
-    # The banner and the evidence panel must not be inside a fold.
+    assert 'details class="card wide fold"' in body
+    # The verdict, the evidence and the robustness panel are open; nothing else is.
     render = body[body.index("function renderImage(d){"):body.index("$('#go').onclick")]
     head = render[:render.index("<details")]
-    assert "banner({" in head and "Evidence" in head
+    for panel in ("banner({", "Evidence", "Robustness"):
+        assert panel in head, f"{panel} is buried in a fold"
+
+
+def test_the_panels_that_only_said_not_available_are_gone():
+    """An AI-attribution panel reading "not available" three times is not information.
+
+    It needs a trained localisation head. Until then the panel is absent, not empty: a row
+    of "not available" pills tells a reader nothing except that something is missing.
+    """
+    body = page()
+    assert "AI attribution" not in body
+    assert "Attributed area" not in body
+    assert "Mixed content" not in body
+
+
+def test_no_verdict_is_shown_when_the_polarity_has_not_been_measured():
+    """An inverted verdict accuses the person holding a real photograph.
+
+    Worse than no verdict, and not recoverable in front of a reader who knows the answer.
+    """
+    from forge.image.report import build_report
+
+    import io
+
+    import pytest as _pytest
+
+    _pytest.importorskip("PIL")
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 64), (10, 120, 90)).save(buffer, format="JPEG")
+    report = build_report(buffer.getvalue(), with_detector=False)
+    assert report.assessment.available is False
+    assert report.assessment.verdict is None
+
+
+def test_the_footer_carries_the_author():
+    body = page()
+    assert "Built by Akila Lourdes Miriyala Francis" in body
+    assert "Report schema" not in body

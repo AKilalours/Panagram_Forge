@@ -44,12 +44,15 @@ class Map:
     png_data_uri: str
     what_it_shows: str
     caveat: str
+    # One line for the panel. The long form stays in the payload for anyone reading the API.
+    short: str = ""
     peak_location: dict | None = None
     detail: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return {
             "name": self.name, "title": self.title, "image": self.png_data_uri,
+            "short": self.short or self.what_it_shows,
             "what_it_shows": self.what_it_shows, "caveat": self.caveat,
             "peak_location": self.peak_location, "detail": self.detail,
         }
@@ -137,6 +140,7 @@ def error_level_map(data: bytes, quality: int = 90) -> Map | None:
     return Map(
         name="error_level",
         title="Compression residual",
+        short="Change on re-encoding. Edges always light up; a soft-edged bright patch does not.",
         png_data_uri=_to_png_uri(residual),
         what_it_shows=(
             "How much each region changes when the image is re-encoded at quality "
@@ -183,6 +187,7 @@ def noise_map(data: bytes) -> Map | None:
     return Map(
         name="noise",
         title="Noise floor",
+        short="Sensor noise per cell. Flat dark regions had their noise removed.",
         png_data_uri=_to_png_uri(grid),
         what_it_shows=(
             "Dispersion of a high-pass residual per cell. A photograph carries roughly "
@@ -206,6 +211,7 @@ def detail_map(data: bytes) -> Map | None:
     return Map(
         name="detail",
         title="Local contrast",
+        short="Light to dark range per cell. Sky and bokeh are legitimately smooth.",
         png_data_uri=_to_png_uri(grid),
         what_it_shows=(
             "Range between the lightest and darkest pixel in each cell. Generated regions "

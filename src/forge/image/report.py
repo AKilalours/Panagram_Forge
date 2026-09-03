@@ -378,7 +378,7 @@ def build_report(
     data: bytes,
     filename: str = "upload",
     preview: str | None = None,
-    with_stability: bool = True,
+    with_stability: bool = False,
     with_detector: bool = True,
 ) -> Report:
     """Analyse one image end to end. Pure CPU: no GPU, no network, no model weights.
@@ -442,7 +442,7 @@ def build_report(
     )
 
     robustness: list[dict] = []
-    if detector_obj is not None and with_stability:
+    if detector_obj is not None:
         robustness = _timed(
             "detector_robustness",
             lambda: _detector_robustness(data, detector_obj),
@@ -461,17 +461,23 @@ def build_report(
                 verdict=detection.verdict,
                 confidence=detection.ai_probability,
                 band=f"[{ABSTAIN_LOW}, {ABSTAIN_HIGH})",
+                reason="Uncalibrated score from a baseline detector.",
+            )
+            if detection is not None and detection.polarity_verified
+            else Assessment(
                 reason=(
-                    "Uncalibrated probability from a baseline visual detector. The decision "
-                    "band is a documented default, not a threshold fitted on validation data."
-                    if detection.polarity_verified else
-                    "POLARITY UNVERIFIED. Which class this detector calls AI has not been "
-                    "confirmed against labelled images, so this verdict may be inverted. "
-                    "Run scripts/image_detector_probe.py before reading it as a result."
+                    "Detector not configured."
+                    if detection is None
+                    else "Detector polarity not verified."
+                ),
+                detail=(
+                    "No visual detector is loaded."
+                    if detection is None
+                    else "Which class this detector calls AI has not been measured against "
+                         "labelled images, so a verdict could be inverted. Run "
+                         "scripts/image_detector_probe.py."
                 ),
             )
-            if detection is not None
-            else Assessment()
         ),
         attribution=Attribution(),
         authenticity=_authenticity_rows(findings),

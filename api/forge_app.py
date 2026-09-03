@@ -396,8 +396,7 @@ footer{max-width:1180px;margin:0 auto;padding:6px 22px 36px;color:var(--muted);f
     <div id="outText"></div>
   </section>
 </main>
-<footer>Every value is computed from what you uploaded. Nothing is inferred, defaulted or
-filled in; where a signal is unavailable the panel says so.</footer>
+<footer>Built by Akila Lourdes Miriyala Francis</footer>
 <script>
 const $=s=>document.querySelector(s);
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
@@ -492,17 +491,8 @@ function banner(o){
 }
 
 function renderImage(d){
-  const a=d.assessment, at=d.attribution, ev=d.evidence;
-  const DIR={toward_ai:'points to AI',toward_capture:'points to capture',neutral:'neutral'};
-
-  // PRODUCT FIRST, RESEARCH SECOND. A reader's first question is "what does FORGE think",
-  // and everything below the fold answers "why" or "how do you know". Diagnostics are
-  // collapsed rather than deleted: a technical reader opens them, a first-time reader is
-  // not met with six panels of raw statistics before the verdict.
-  // Named explicitly. An earlier version looked up 'visual' and fell back to streams[0],
-  // which happened to be the right stream, so a wrong key produced a correct panel. If the
-  // detector stream is ever missing, say so rather than promoting whatever came first:
-  // labelling camera metadata as the PRIMARY evidence would invert the whole hierarchy.
+  const a=d.assessment, ev=d.evidence;
+  const DIR={toward_ai:'points to AI',toward_capture:'points to capture',neutral:''};
   const primary = ev.streams.find(s=>s.key==='visual_model');
   const supporting = ev.streams.filter(s=>s.key!=='visual_model');
 
@@ -511,20 +501,16 @@ function renderImage(d){
       <div class="track"><div class="fill ${s.direction==='toward_ai'?'ai':
         s.direction==='toward_capture'?'cap':(s.available?'':'off')}"
         style="width:${s.available?s.strength:100}%"></div></div>
-      <div class="sub">${esc(s.summary)}${s.note?', '+esc(s.note):''}
-      ${s.available&&s.direction!=='neutral'?`<span class="dir">${esc(DIR[s.direction])}</span>`:''}
-      </div></div>`;
+      <div class="sub">${esc(s.summary)}${s.available&&DIR[s.direction]
+        ?` <span class="dir">${esc(DIR[s.direction])}</span>`:''}</div></div>`;
 
   let h = banner({
     available: !!a.available,
     verdict: a.verdict,
     probability: a.confidence,
     reason: a.reason,
-    score_label: a.available ? 'AI probability, uncalibrated' : 'AI probability',
-    score_note: a.available
-      ? `Decision band ${a.band}. Not fitted on validation data, and the probability is the `
-        + `model's own output rather than a calibrated one.`
-      : '',
+    score_label: 'AI probability',
+    score_note: a.available ? '' : esc(a.detail||''),
   }) + `<div class="grid">`;
 
   h+=`<div class="card"><h3>Image</h3>
@@ -533,114 +519,68 @@ function renderImage(d){
     ${row('File',d.filename)}${row('Size',(d.size_bytes/1024).toFixed(0)+' KB')}</div></div>`;
 
   h+=`<div class="card"><h3>Evidence</h3>
-    <div class="grouplabel">Primary</div>${primary?streamRow(primary)
-      :'<p class="caveat">The detector stream is missing from this report. No stream is '
-       +'promoted in its place.</p>'}
-    <div class="grouplabel">Supporting</div>${supporting.map(streamRow).join('')}
-    <div class="row" style="margin-top:8px"><span class="k">Evidence conflict</span>
-    <span class="v"><span class="pill ${cls(ev.conflict)}">${esc(ev.conflict)}</span></span></div>
-    <p class="caveat">${esc(ev.conflict_reason)}</p>
-    <p class="caveat">Each bar is how much that stream has to say, not a probability. Only
-    the primary stream can decide AI or not, so the streams are never summed.</p></div>`;
+    <div class="grouplabel">Detector</div>${primary?streamRow(primary):''}
+    <div class="grouplabel">Supporting signals</div>${supporting.map(streamRow).join('')}
+    <div class="row" style="margin-top:8px"><span class="k">Agreement</span>
+    <span class="v"><span class="pill ${cls(ev.conflict)}">${
+      ev.conflict==='low'?'consistent':esc(ev.conflict)}</span></span></div>
+    ${ev.conflict!=='low'?`<p class="caveat">${esc(ev.conflict_reason)}</p>`:''}
+    <p class="caveat">Only the detector decides. The other signals describe the file and
+    none of them establishes authorship.</p></div>`;
 
-  h+=`<div class="card"><h3>Authenticity signals</h3>${rows(d.authenticity)}
-    <p class="caveat">Each line is read from the file. None of them establishes
-    authorship.</p></div>`;
+  h+=`<div class="card"><h3>File signals</h3>${rows(d.authenticity)}</div>`;
 
-  h+=`<div class="card"><h3>AI attribution</h3>
-    ${row('Attributed area',at.ai_area_fraction)}
-    ${row('Mixed content',at.mixed_content)}
-    ${row('AI attribution heatmap',at.heatmap)}
-    <p class="caveat">${esc(at.reason)}</p></div>`;
+  // Detector robustness: does the VERDICT survive the transforms an image meets in the
+  // wild? Runs on every request now that it costs about a second, so there is no button
+  // and no second pass over the same file.
+  const R=d.robustness||[];
+  if(R.length){
+    const held=R.filter(r=>!r.error&&!r.changed).length, n=R.filter(r=>!r.error).length;
+    h+=`<div class="card wide"><h3>Robustness
+      <span class="sum">${held} of ${n} transforms hold the verdict</span></h3>
+      <div class="chips">${R.map(r=>r.error
+        ?`<div class="chip"><div class="n">${esc(r.attack)}</div>
+          <div class="d">failed</div></div>`
+        :`<div class="chip"><div class="n">${esc(r.attack)}
+          <span class="pill ${r.changed?'hot':'ok'}">${r.changed?'flipped':'held'}</span></div>
+          <div class="d">${(r.ai_probability*100).toFixed(1)}%${r.attack==='original'?''
+            :` · ${r.delta>=0?'+':''}${(r.delta*100).toFixed(1)}</div>`}</div>`).join('')}</div>
+      <p class="caveat">Each transform is re-scored and compared with the original. A
+      flipped chip means that edit changes the answer.</p></div>`;
+  }
 
   const maps=d.maps||[];
-  h+=`<details class="card wide fold"><summary>Forensic diagnostics
-      <span class="pill warnpill">not AI attribution</span></summary>
-    <div class="foldbody">
-    <p class="caveat">Signal diagnostics computed from the pixels. They are NOT predictions
-    of which regions are AI-generated: that is the attribution panel above, and it needs the
-    trained localisation head.</p>
-    ${maps.length?`<div class="maps">${maps.map(m=>`<figure>
-      <img src="${m.image}" alt="${esc(m.title)}">
-      <figcaption><b>${esc(m.title)}</b><br>${esc(m.what_it_shows)}
-      <span class="caveat">${esc(m.caveat)}</span></figcaption></figure>`).join('')}</div>`
-    :'<p class="caveat">No map could be computed from this file.</p>'}
-    <p class="caveat">${esc(d.maps_note||'')}</p>
-
-    <h3 style="margin-top:20px">Manipulation analysis</h3>${techRows(d.manipulation)}
-    <p class="caveat">Raw statistics from this file, not probabilities. A resampling score
-    of 373 is the strength of a periodic pattern, not "373 units of editing". Post-processing
-    is orthogonal to authorship. Humans edit photographs.</p>
-
-    <h3 style="margin-top:20px">Provenance and forensics</h3>${rows(d.provenance)}
-
-    ${(d.robustness&&d.robustness.length)?`
-    <h3 style="margin-top:20px">Detector robustness</h3>
-    <p class="caveat">Whether the VERDICT survives each transform. Different from the signal
-    survival below: a signal can vanish while the verdict holds, and the verdict can flip
-    while every signal is intact.</p>
-    <div class="chips">${d.robustness.map(r=>r.error
-      ? `<div class="chip"><div class="n">${esc(r.attack)}</div>
-         <div class="d">${esc(r.error)}</div></div>`
-      : `<div class="chip"><div class="n">${esc(r.attack)}
-         <span class="pill ${r.changed?'hot':'ok'}">${r.changed?'verdict changed':'held'}</span></div>
-         <div class="d">${(r.ai_probability*100).toFixed(1)}%${r.attack==='original'?''
-           :` · ${r.delta>=0?'+':''}${(r.delta*100).toFixed(1)} pts`}</div></div>`).join('')}</div>`
-    :''}
-
-    <h3 style="margin-top:20px">Signal stability under transformation</h3>
-    ${d.stability_available
-      ? `<div class="chips">${d.stability.map(s=>`<div class="chip">
-          <div class="n">${esc(s.label)} <span class="pill ${cls(s.status)}">${esc(lbl(s.status))}</span></div>
-          <div class="d">${s.value?esc(s.value):'not checked'}</div></div>`).join('')}</div>`
-      : `<p class="caveat">Not run. This pass re-encodes your image ten times and is most of
-         the analysis time, so it is opt-in.</p>
-         <button id="runStability" class="secondary">Run stability check</button>`}
-    <p class="caveat">Signal survival, measured on your image, not detector robustness:
-    that needs the detector, and the two are different questions. Once a visual detector
-    exists this gains a second half, whether the VERDICT survives the same transform.</p>
-    </div></details>`;
+  if(maps.length){
+    h+=`<details class="card wide fold"><summary>Forensic maps</summary>
+      <div class="foldbody">
+      <div class="maps">${maps.map(m=>`<figure>
+        <img src="${m.image}" alt="${esc(m.title)}">
+        <figcaption><b>${esc(m.title)}</b><br>${esc(m.short||m.what_it_shows)}</figcaption>
+        </figure>`).join('')}</div>
+      <p class="caveat">Pixel diagnostics, normalized within this image. They describe the
+      file; the detector above decides.</p></div></details>`;
+  }
 
   const T=d.timings_ms||{}, order=['preview','detector','forensics','perceptual_hash',
-    'evidence','forensic_maps','detector_robustness','transform_stability'];
-  const NAME={preview:'Preview thumbnail',forensics:'Forensic analysis',
-    perceptual_hash:'Perceptual hash',evidence:'Evidence engine',
-    forensic_maps:'Forensic maps',transform_stability:'Transform stability (opt-in)',
-    detector:'Image detector inference',detector_robustness:'Detector robustness (opt-in)'};
-  const total=d.elapsed_ms;
-  h+=`<details class="card wide fold"><summary>Performance details
-      <span class="sum">${(total/1000).toFixed(1)} s on CPU</span></summary>
+    'evidence','forensic_maps','detector_robustness'];
+  const NAME={preview:'Preview',detector:'Detector inference',forensics:'Forensic analysis',
+    perceptual_hash:'Perceptual hash',evidence:'Evidence engine',forensic_maps:'Forensic maps',
+    detector_robustness:'Robustness'};
+  h+=`<details class="card wide fold"><summary>Details
+      <span class="sum">${(d.elapsed_ms/1000).toFixed(1)} s on CPU</span></summary>
     <div class="foldbody">
-    ${order.filter(k=>k in T).map(k=>{
-      const ms=T[k], share=total?Math.round(100*ms/total):0;
-      return `<div class="row"><span class="k">${esc(NAME[k]||k)}</span>
-        <span class="v">${k==='detector'&&!(d.detector&&d.detector.available)
-          ?'<span class="pill na">not loaded</span>'
-          :ms.toLocaleString()+' ms'+(share>=5?' · '+share+'%':'')}</span></div>`;
-    }).join('')}
-    ${row('Total',total.toLocaleString()+' ms (CPU)')}
-    <p class="caveat">Measured per stage, not estimated.</p>
-    <p class="tech">Report schema ${esc(d.report_version)}</p></div></details>`;
-
-  h+=`<details class="card wide fold"><summary>Limitations and interpretation</summary>
-    <div class="foldbody">
-    <p>${esc(a.detail||'')}</p>
-    ${d.detector&&d.detector.available?`<p class="tech">Verdict produced by a baseline visual
-      detector, ${esc(d.detector.model_id)}, classes ${esc((d.detector.labels||[]).join(', '))}.
-      It is a published third-party model used as a comparison point, not FORGE's own trained
-      detector, and its probability is uncalibrated for this project's operating point.</p>`
-      :`<p class="tech">${esc((d.detector&&d.detector.reason)||'')}</p>`}
-    <ul class="cannot">${d.cannot_conclude.map(l=>'<li>'+esc(l)+'</li>').join('')}</ul>
-    <p class="caveat">Supporting evidence describes the file. It does not establish who made
-    the image, and results are least reliable for unseen generators and heavily transformed
-    images.</p></div></details>`;
+    <h3>Manipulation analysis</h3>${techRows(d.manipulation)}
+    <h3 style="margin-top:18px">Provenance</h3>${rows(d.provenance)}
+    <h3 style="margin-top:18px">Timing</h3>
+    ${order.filter(k=>k in T).map(k=>`<div class="row"><span class="k">${esc(NAME[k]||k)}</span>
+      <span class="v">${T[k].toLocaleString()} ms</span></div>`).join('')}
+    ${row('Total',d.elapsed_ms.toLocaleString()+' ms')}
+    ${d.detector&&d.detector.available
+      ?`<p class="tech">Detector ${esc(d.detector.model_id)}, uncalibrated baseline.</p>`:''}
+    </div></details>`;
 
   h+='</div>';
   $('#outImage').innerHTML=h;
-  const btn=$('#runStability');
-  if(btn) btn.onclick=()=>{ window._forgeStability=true;
-    $('#outImage').innerHTML='<div class="card">Re-encoding ten times, this takes a while…</div>';
-    sendImage(); };
 }
 
 $('#go').onclick=async()=>{
