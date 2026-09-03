@@ -197,6 +197,20 @@ def evaluate(arm: str, benchmark: str, limit: int, out_dir: pathlib.Path) -> dic
     }
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / f"ood_{arm}_{benchmark}.json").write_text(json.dumps(result, indent=2) + "\n")
+
+    # Per-document scores, so the two arms can be compared with a PAIRED test.
+    #
+    # Comparing two AUROCs from summary numbers alone forces an unpaired approximation,
+    # which is wrong here: both arms score the SAME documents, so their errors are
+    # correlated, and ignoring that inflates the standard error. A paired bootstrap over
+    # these arrays is the honest test and costs nothing once the scores are on disk.
+    #
+    # Written as .npz rather than into the JSON because it is thousands of floats, and a
+    # results file a human reads should stay readable.
+    np.savez_compressed(
+        out_dir / f"ood_scores_{arm}_{benchmark}.npz",
+        labels=labels, mean=mean, max=maximum,
+    )
     return result
 
 
