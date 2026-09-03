@@ -25,6 +25,7 @@ other way round.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import json
 import pathlib
 import statistics
@@ -134,8 +135,12 @@ def main() -> int:
     print(f"labels   {detector.labels}, name-based AI index = {detector.ai_index}\n")
 
     groups: dict[str, list[float]] = {}
+    # The names actually scored, which --limit can make a subset of the directory. Recording
+    # the directory listing instead would describe a set the numbers do not come from.
+    scored_files: dict[str, list[str]] = {}
     for name, root in (("ai", args.ai), ("human", args.human)):
         files = _images(root)[: args.limit]
+        scored_files[name] = sorted(path.name for path in files)
         if len(files) < MIN_PER_GROUP:
             print(f"{name}: only {len(files)} images in {root}; need at least {MIN_PER_GROUP}")
             return 2
@@ -223,6 +228,18 @@ def main() -> int:
         "verified_ai_index": verified_index,
         "inverted_relative_to_labels": inverted,
         "n": {k: len(v) for k, v in groups.items()},
+        # WHAT IT WAS MEASURED ON. Without this the record states an operating point that
+        # nobody can reproduce or audit: the directories were outside the repository (this
+        # project never redistributes image pixels), and the first probe set lived in /tmp
+        # and was lost to a reboot. Names and sizes are metadata, not content, so recording
+        # them respects the data policy while making the measurement traceable.
+        "measured_on": {
+            "ai_dir": str(pathlib.Path(args.ai).resolve()),
+            "human_dir": str(pathlib.Path(args.human).resolve()),
+            "ai_files": scored_files["ai"],
+            "human_files": scored_files["human"],
+            "measured_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
+        },
         "mean_probability_as_scored": {"ai": round(ai_mean, 6), "human": round(human_mean, 6)},
         "median_probability_as_scored": {"ai": round(ai_med, 6), "human": round(human_med, 6)},
         "separation": round(separation, 6),

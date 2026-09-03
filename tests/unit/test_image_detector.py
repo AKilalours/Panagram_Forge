@@ -354,3 +354,34 @@ def test_the_filename_plays_no_part_in_the_verdict():
     a = build_report(plain, filename="ai_generated_fake.png", with_detector=False)
     b = build_report(plain, filename="my_holiday.png", with_detector=False)
     assert a.assessment.verdict == b.assessment.verdict is None
+
+
+def test_the_polarity_record_says_what_it_was_measured_on():
+    """An operating point nobody can trace is not a measurement, it is a number.
+
+    The first probe set lived in /tmp and was lost to a reboot, and the committed record
+    could not say which images produced its threshold: only that there were 20 and 9. This
+    project never redistributes image pixels, so the record carries file NAMES, sizes and
+    directories, which are metadata and traceable, rather than the images themselves.
+
+    Skips when no record is committed yet, since the record is a measurement artefact and
+    not every checkout has one.
+    """
+    import json
+    import pathlib
+
+    path = pathlib.Path("reports/experiments/image_detector_polarity.json")
+    if not path.exists():
+        pytest.skip("no polarity record committed")
+
+    record = json.loads(path.read_text(encoding="utf-8"))
+    measured = record.get("measured_on")
+    if measured is None:
+        pytest.skip("record predates provenance; re-run scripts/image_detector_probe.py")
+
+    for field in ("ai_dir", "human_dir", "ai_files", "human_files", "measured_at"):
+        assert measured.get(field), f"{field} missing from the record's provenance"
+    assert len(measured["ai_files"]) == record["n"]["ai"]
+    assert len(measured["human_files"]) == record["n"]["human"], (
+        "the recorded file list must be the set the numbers came from, not the directory"
+    )
