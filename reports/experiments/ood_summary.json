@@ -1,0 +1,33 @@
+{
+  "run": "tier1_ood",
+  "date": "2026-09-03",
+  "dataset_version": "v0.1-min",
+  "code_commit": "d6ed814",
+  "note": "Held-out-generator evaluation of the two Tier 1 checkpoints. Windows are mean-pooled per document; the max-pooled variant is recorded in the per-benchmark ood_*.json files and is not the primary number because max inflates FPR on long human documents. 'deployed' figures use the threshold fit on the in-distribution validation split at a 0.1% FPR budget, which is the only threshold available at deployment time. 'fnr_at_budget' refits the threshold on the benchmark itself to hit 0.1% FPR there; it is optimistic and is reported only so the two arms can be compared at a matched operating point.",
+  "arms": {
+    "random": "reports/experiments/forge_min_baseline.json",
+    "mirror": "reports/experiments/forge_min_mirror.json"
+  },
+  "cells": [
+    {"benchmark": "HC3",  "arm": "random", "auroc": 0.6583, "deployed_fpr": 0.0055, "deployed_fnr": 0.9395, "fnr_at_0.1pct_fpr": 0.9695},
+    {"benchmark": "HC3",  "arm": "mirror", "auroc": 0.8851, "deployed_fpr": 0.0240, "deployed_fnr": 0.6295, "fnr_at_0.1pct_fpr": 0.9295},
+    {"benchmark": "MAGE", "arm": "random", "auroc": 0.5877, "deployed_fpr": 0.0085, "deployed_fnr": 0.9610, "fnr_at_0.1pct_fpr": 0.9825},
+    {"benchmark": "MAGE", "arm": "mirror", "auroc": 0.6279, "deployed_fpr": 0.0285, "deployed_fnr": 0.8665, "fnr_at_0.1pct_fpr": 0.9780},
+    {"benchmark": "RAID", "arm": "random", "auroc": 0.7792, "deployed_fpr": 0.0005, "deployed_fnr": 0.8250, "fnr_at_0.1pct_fpr": 0.8135},
+    {"benchmark": "RAID", "arm": "mirror", "auroc": 0.7764, "deployed_fpr": 0.0000, "deployed_fnr": 0.7805, "fnr_at_0.1pct_fpr": 0.7570}
+  ],
+  "significance": {
+    "method": "paired bootstrap over documents, 10,000 resamples; both arms score the same documents, so documents rather than scores are resampled and both arms are recomputed on each resample",
+    "statistic": "AUROC(mirror) - AUROC(random)",
+    "results": [
+      {"benchmark": "HC3",  "observed_delta":  0.2269, "ci95": [0.2125, 0.2413], "fraction_of_resamples_with_sign_reversal": 0.0},
+      {"benchmark": "MAGE", "observed_delta":  0.0403, "fraction_of_resamples_with_sign_reversal": 0.0},
+      {"benchmark": "RAID", "observed_delta": -0.0028, "fraction_of_resamples_with_sign_reversal": 0.727}
+    ]
+  },
+  "reading": [
+    "The AUROC headline is not uniform. It is large on HC3, small on MAGE, and absent on RAID, where the sign reverses in 72.7% of resamples and the two arms are tied.",
+    "At a matched 0.1% false-positive budget the mirror arm has the lower FNR on all three benchmarks: 0.9295 vs 0.9695 on HC3, 0.9780 vs 0.9825 on MAGE, 0.7570 vs 0.8135 on RAID. That is the claim the data supports.",
+    "Neither arm is deployable out of distribution. At the deployed threshold both miss 63% to 96% of AI text, against 0.43% to 0.72% in distribution."
+  ]
+}

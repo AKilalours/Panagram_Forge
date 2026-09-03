@@ -3,10 +3,10 @@
 The ablation table. No cell is filled until the run exists and its `dataset_version`
 and `code_commit` are recorded in `reports/experiments/`.
 
-| System | Human FPR | AI FNR | OOD AUROC | Adversarial FNR | ECE |
+| System | Human FPR | AI FNR | OOD AUROC (HC3 / MAGE / RAID) | Adversarial FNR | ECE |
 |---|---|---|---|---|---|
-| A: random synthetic | 0.000502 | 0.00719 | not run | not run | 0.00447 |
-| B: + synthetic mirrors | 0.000502 | 0.00430 | not run | not run | 0.00371 |
+| A: random synthetic | 0.000502 | 0.00719 | 0.658 / 0.588 / 0.779 | not run | 0.00447 |
+| B: + synthetic mirrors | 0.000502 | 0.00430 | 0.885 / 0.628 / 0.776 | not run | 0.00371 |
 | C: + hard negatives | | | | | |
 | D: + adversarial | | | | | |
 
@@ -42,7 +42,63 @@ models cannot separate them.
 **So the honest reading is:** the pipeline runs end to end, both arms hit the 0.1% FPR
 budget, calibration is good (ECE 0.0045 and 0.0037), and the mirror arm points the right
 way without proving anything. The discriminating test is held-out generators, RAID, MAGE
-and HC3, which has not run.
+and HC3. That test has now run, and the section below is what it returned.
+
+## Held-out generators: what the OOD run actually returned
+
+Both Tier 1 checkpoints scored against three benchmarks built from generators neither arm
+saw in training. Documents are windowed and the windows mean-pooled; the max-pooled variant
+is in `reports/experiments/ood_*.json` and is not primary, because max inflates FPR on long
+human documents. Full cells in `reports/experiments/ood_summary.json`.
+
+| Benchmark | Arm | AUROC | Deployed FPR | Deployed FNR | FNR at a matched 0.1% FPR |
+|---|---|---|---|---|---|
+| HC3 | A: random | 0.6583 | 0.0055 | 0.9395 | 0.9695 |
+| HC3 | B: mirror | **0.8851** | 0.0240 | 0.6295 | **0.9295** |
+| MAGE | A: random | 0.5877 | 0.0085 | 0.9610 | 0.9825 |
+| MAGE | B: mirror | **0.6279** | 0.0285 | 0.8665 | **0.9780** |
+| RAID | A: random | **0.7792** | 0.0005 | 0.8250 | 0.8135 |
+| RAID | B: mirror | 0.7764 | 0.0000 | 0.7805 | **0.7570** |
+
+"Deployed" uses the threshold fit on the in-distribution validation split, which is the only
+threshold available at deployment time. The last column refits the threshold on the benchmark
+itself to hit 0.1% FPR there. That refit threshold is optimistic and is not available in
+production; it is reported only so that the two arms can be compared at the same operating
+point rather than at two different ones.
+
+### Significance
+
+Paired bootstrap, 10,000 resamples. Both arms score the same documents, so their errors are
+correlated; the resample is over **documents**, with both arms recomputed on each resample.
+
+| Benchmark | AUROC(B) - AUROC(A) | 95% CI | Resamples where the sign reverses |
+|---|---|---|---|
+| HC3 | +0.2269 | [0.2125, 0.2413] | 0.0% |
+| MAGE | +0.0403 | | 0.0% |
+| RAID | **-0.0028** | | **72.7%** |
+
+### The reading
+
+**"Mirrors give better AUROC" is not the claim the data supports.** On RAID the two arms are
+tied, with the control arm marginally ahead, and the sign reverses in nearly three quarters
+of resamples. The AUROC gap is large on HC3, small on MAGE, and absent on RAID, which tracks
+how far each benchmark sits from the four training generator families rather than anything
+about mirroring.
+
+**The claim the data does support is in the last column.** At a matched 0.1% false-positive
+budget the mirror arm misses less AI text on all three benchmarks: 0.9295 against 0.9695 on
+HC3, 0.9780 against 0.9825 on MAGE, 0.7570 against 0.8135 on RAID. So: matched mirrors help
+at the low-false-positive operating point, consistently across three unseen benchmarks, while
+AUROC agreement varies by benchmark distance. That is narrower than the headline and it is
+the part that survives.
+
+Reporting only the HC3 AUROC would be the more flattering half of a true statement, which is
+its own kind of dishonesty.
+
+**Neither arm is deployable out of distribution.** At the deployed threshold both miss 63% to
+96% of AI documents, against 0.43% to 0.72% in distribution. A detector trained on four
+families at 1.7B to 3.8B parameters does not transfer, and no amount of arm-versus-arm
+difference changes that. Closing that gap is what arms C and D are for.
 
 ## What made these numbers trustworthy enough to report at all
 

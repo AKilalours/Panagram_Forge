@@ -1,0 +1,8 @@
+# Run records are the evidence docs/evaluation.md points at, so the small JSON
+# summaries are tracked. Everything heavy that a run also drops here -- per-document
+# score arrays, checkpoints, logs -- is not.
+*
+!.gitkeep
+!.gitignore
+!*.json
+*.npz

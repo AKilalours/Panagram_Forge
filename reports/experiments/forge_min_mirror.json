@@ -1,0 +1,29 @@
+{
+  "experiment": "forge_min_mirror",
+  "arm": "mirror",
+  "code_commit": "4ec8204c70e7b519f782f0a105dcf5b45c026e7c",
+  "dataset_version": "v0.1-min",
+  "backbone": "microsoft/deberta-v3-base",
+  "device": "cuda",
+  "precision": "bf16",
+  "ai_source": "data/silver/mirrors",
+  "n_windows": {
+    "train": 33196,
+    "val": 4084,
+    "test": 4211
+  },
+  "steps": 1038,
+  "wall_seconds": 1283.4,
+  "fpr_budget": 0.001,
+  "val": {
+    "loss": 0.014078,
+    "fpr_at_budget": 0.000502,
+    "threshold": 0.992285,
+    "fnr": 0.004304,
+    "auroc": 0.999971,
+    "ece": 0.003713,
+    "temperature": 1.405891,
+    "n_human": 1993,
+    "n_ai": 2091
+  }
+}

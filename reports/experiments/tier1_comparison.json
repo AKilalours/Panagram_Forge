@@ -1,0 +1,68 @@
+{
+  "comparison": "tier1_arm_a_vs_arm_b",
+  "code_commit": "4ec8204c70e7b519f782f0a105dcf5b45c026e7c",
+  "dataset_version": "v0.1-min",
+  "equal_budget": {
+    "ai_cap": 20000,
+    "human_cap": 20000,
+    "epochs": 2
+  },
+  "length_confound_removed": {
+    "before_fix": {
+      "random": 0.841,
+      "mirror": 0.774
+    },
+    "after_per_document_budget": {
+      "random": 0.72,
+      "mirror": 0.699
+    },
+    "after_human_length_matching": {
+      "random": 0.5459,
+      "mirror": 0.5459
+    },
+    "metric": "AUROC obtainable from document length alone"
+  },
+  "result": {
+    "fpr_at_budget": {
+      "random": 0.000502,
+      "mirror": 0.000502,
+      "false_positives": {
+        "random": 1,
+        "mirror": 1,
+        "of_humans": 1993
+      }
+    },
+    "fnr": {
+      "random": 0.007191,
+      "mirror": 0.004304,
+      "misses": {
+        "random": 15,
+        "mirror": 9
+      },
+      "of_ai": {
+        "random": 2086,
+        "mirror": 2091
+      },
+      "relative_reduction": 0.401,
+      "absolute_reduction_pp": 0.289
+    },
+    "auroc": {
+      "random": 0.999974,
+      "mirror": 0.999971
+    },
+    "ece": {
+      "random": 0.004467,
+      "mirror": 0.003713
+    }
+  },
+  "significance": {
+    "test": "two-proportion z-test on FNR",
+    "z": 1.234,
+    "p_two_sided": 0.217,
+    "significant_at_0.05": false,
+    "n_per_arm_for_80_percent_power": 10761,
+    "verdict": "UNDERPOWERED. The 40% relative reduction rests on 9 misses versus 15. This validation split cannot resolve a difference this size."
+  },
+  "in_distribution_only": true,
+  "caveat": "AUROC 0.99997 on both arms means the validation split is saturated: the detector is scoring text from the same four generator families it trained on. The discriminating test is held-out generators (RAID, MAGE, HC3), which has not run."
+}
