@@ -61,6 +61,12 @@ dist = [
 serve = [
   "fastapi>=0.110",
   "uvicorn[standard]>=0.29",
+  # /v1/image/analyze takes an UploadFile. FastAPI raises at import time, not at request
+  # time, when this is absent, so omitting it does not degrade the app: it stops it booting.
+  "python-multipart>=0.0.9",
+  # The image path decodes every upload with Pillow. It is also in the `image` extra; the
+  # server cannot run without it, so it is a hard serve dependency too.
+  "pillow>=10.0",
   "onnxruntime>=1.17",
   "prometheus-client>=0.20",
   "boto3>=1.34",
