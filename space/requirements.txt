@@ -1,0 +1,13 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+pydantic>=2.6
+pillow>=10.2
+numpy>=1.26
+pyyaml>=6.0
+# CPU wheels. The default index pulls the CUDA build, which is several gigabytes and
+# useless here.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+transformers>=4.40
+huggingface_hub>=0.23
