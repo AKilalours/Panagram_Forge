@@ -1,46 +1,50 @@
 """FORGE: one interface, two detectors. Text and Image.
 
-RUNS ON CPU. No GPU, no network. The image analysis computes every value from the uploaded
-bytes at request time; the text side calls the detection API, which returns its real state.
+RUNS ON CPU. The text side scores documents with the trained FORGE arms loaded from
+local checkpoints. The image side computes every value from the uploaded bytes at
+request time. Neither path calls out to a network service.
 
-WHAT IS LIVE TODAY
+TEXT TAB. Loads an arm's checkpoint on CPU in float32 (training ran in bf16, which
+cannot matmul on CPU), windows the document, mean-pools the window scores, and reports
+the probability against the threshold fitted on the validation split. The arm selector
+switches between the control arm and the mirror arm so the two can be compared on the
+same document. The arms are in-distribution detectors: docs/evaluation.md records that
+both of them miss 63 to 96 percent of out-of-distribution AI text, and the page says so
+rather than implying a general-purpose detector.
 
-  Image tab   Every forensic panel: container, EXIF, camera consistency, C2PA presence,
-              self-declared generation markers, quantisation tables, error level analysis,
-              resampling, noise uniformity, colour statistics, perceptual hash, and a
-              transform-stability check run over ten real attacks.
+IMAGE TAB. The verdict is decided in a fixed priority order, and the panel names which
+rule fired:
 
-  Text tab    Posts to /v1/detect on the detection API. That endpoint returns 503 with a
-              stated reason until a model is registered, and the page shows the reason.
+  1. A self-declaration in the file (IPTC digitalSourceType trainedAlgorithmicMedia, a
+     C2PA manifest, a Stable Diffusion parameter block). This is evidence from the
+     generator itself and outranks any statistical guess.
+  2. The visual detector, but only when its polarity and operating point have been
+     measured on labelled images and recorded under reports/experiments. The label
+     index is resolved from measurement, never from id2label documentation.
+  3. Otherwise a refusal. No score is synthesised from metadata, because metadata-based
+     guessing fires hardest on screenshots, chat-app downloads and re-saved photographs:
+     exactly the false accusation against innocent human images that this project exists
+     to prevent.
 
-WHAT IS NOT, AND WHY IT IS NOT FAKED. The image verdict and the attribution heatmap need
-trained weights. The reference design this page follows shows a large green "Human, 98.2%".
-That number comes from a calibrated model. Synthesising one from metadata would fire hardest
-on screenshots, chat-app downloads and re-saved photographs, because those have no EXIF and
-library quantisation tables: exactly the false positive against innocent human images that
-this entire project exists to prevent. So the image banner shows the verdict and score slots
-PENDING, with the gauge greyed, rather than filled or removed. Built pending so the day a
-detector exists it fills in, instead of the panel being designed then.
+The detector is a measured baseline, not a trained FORGE model, and it is uncalibrated:
+it has no validation split of its own. The evidence panel says that in those words, and
+a test forbids the old "calibrated on validation data" wording from returning.
 
-The TEXT banner is the same component with a real number in it, because that detector exists
-and is calibrated. One shape, two states, so the difference between "measured" and "not
-measured" is visible at a glance rather than inferred from which panels are missing.
+THREE VERDICTS, NOT TWO. AI, NO AI, and UNCERTAIN. The uncertain band exists because the
+operating point was fitted at zero false positives on a small human set, and an image
+landing between the human ceiling and the confident-AI floor is a case the measurement
+does not cover. Reporting it as a verdict would be inventing precision.
 
-EVIDENCE STREAMS SHOW A WORD, NOT A PERCENTAGE. `strength` is how much a stream has to say,
-not a probability. "Camera metadata 50%" reads as "50% likely to be a photograph", which is
-not what it means and is not recoverable from a caption underneath. The bar stays as a rough
-visual, the number stays in the payload, and the panel says "partial".
+ATTRIBUTION. Occlusion attribution in the model's own preprocessed tensor space, one
+batched forward pass over a 5x5 grid, so the map shows which regions actually move the
+detector's score. The low-level forensic maps (error level analysis, residuals) are a
+separate, clearly labelled section: they are image statistics, not model attribution.
 
-THE FORENSIC MAPS ARE NOT ATTRIBUTION. They are labelled low-level, carry a "not AI
-attribution" badge, and sit below the attribution panel that says the localisation head is
-untrained. A residual map next to an AI-detection product invites exactly the reading it
-cannot support.
+EVIDENCE STREAMS SHOW A WORD, NOT A PERCENTAGE. `strength` is how much a stream has to
+say, not a probability. "Camera metadata 50%" reads as "50% likely to be a photograph",
+which is not what it means and is not recoverable from a caption underneath.
 
-THE TRANSFORM-SURVIVAL PASS IS OPT-IN. It re-encodes the image ten times and was about 35 of
-the 39 seconds a 2.8 MB JPEG took. It answers a second-order question, so it runs on a
-button. Its absence is reported as absence, never as an empty result.
-
-Run:  uvicorn api.forge_app:app --port 8080
+Run:  python -m uvicorn api.forge_app:app --port 8000
 """
 
 from __future__ import annotations
