@@ -3,8 +3,16 @@
 Decisions here that change results, stated because they are the ones worth arguing about:
 
 **Validation reports FPR at the budget, not just loss.** A run whose val loss improved but
-whose FPR-at-budget got worse has not improved for this product. `best_metric` is FPR,
-lower is better, and checkpoint selection uses it.
+whose FPR-at-budget got worse has not improved for this product.
+
+**Checkpoint selection uses FPR-at-budget as a CONSTRAINT and FNR as the objective.** It did
+not always. The first version selected on FPR-at-budget itself, which cannot work: that
+number is measured at a threshold that has just been moved until the budget is met, so it is
+pinned to the nearest achievable value and is the same at every epoch. In the Tier 1 runs it
+was 1/1993 = 0.000502 at every evaluation of both arms, and with a `<=` comparison the last
+epoch therefore always won. `best.pt` was byte-identical to `last.pt` in both runs, and the
+selection step was decorative. The metric being flat is what made it invisible: nothing ever
+looked wrong, because a constant never regresses. See tests/unit/test_checkpoint_selection.py.
 
 **Checkpoint resume is mandatory, not a nicety.** Spot GPU instances are the affordable
 way to run this, and a run that cannot resume turns every preemption into a lost day.
@@ -39,7 +47,9 @@ from forge.evaluation.calibration import fit_temperature
 class TrainState:
     epoch: int = 0
     global_step: int = 0
-    best_metric: float = float("inf")     # FPR at budget, lower is better
+    best_metric: float = float("inf")     # FPR at budget of the selected checkpoint
+    best_fnr: float = float("inf")        # FNR at that budget; THIS is the objective
+    best_in_budget: bool = False          # whether the selected checkpoint met the budget
     best_step: int = 0
     dataset_version: str = ""
     code_commit: str = ""
@@ -155,6 +165,36 @@ class ValResult:
 
     def as_dict(self) -> dict:
         return {k: (round(v, 6) if isinstance(v, float) else v) for k, v in asdict(self).items()}
+
+
+def is_better_checkpoint(val: "ValResult", state: TrainState, fpr_budget: float) -> bool:
+    """Should this evaluation replace the saved best checkpoint?
+
+    The rule: **meeting the false-positive budget is a constraint, missing less AI text is
+    the objective.** A checkpoint inside the budget always beats one outside it, however
+    good the outside one looks. Among checkpoints inside the budget, lower FNR wins. Among
+    checkpoints outside it, the one closest to the budget wins, so that a run which never
+    reaches the budget still saves something rather than nothing.
+
+    Why this replaces `val.fpr_at_budget <= state.best_metric`:
+
+    `fpr_at_budget` is measured at a threshold that was just chosen to hit the budget. The
+    threshold moves until the FPR lands at the closest achievable value, so the number is
+    pinned by construction. With 1,993 human validation documents the only reachable values
+    near a 0.1% budget are 0 and 1/1993 = 0.000502, and every epoch of both Tier 1 arms
+    reported exactly 0.000502. Selecting on a constant is not selection, and `<=` then handed
+    the win to whichever epoch came last. `best.pt` and `last.pt` were identical files.
+
+    FNR at that same threshold is the quantity that actually varies (0.0072 against 0.0043
+    between the two arms) and is the one the product cares about. Comparison is strict, so a
+    tie keeps the EARLIER checkpoint rather than silently drifting to the last epoch again.
+    """
+    in_budget = val.fpr_at_budget <= fpr_budget
+    if in_budget != state.best_in_budget:
+        return in_budget                      # inside the budget always beats outside it
+    if in_budget:
+        return val.fnr < state.best_fnr       # objective
+    return val.fpr_at_budget < state.best_metric   # nothing qualifies yet; get closer
 
 
 def evaluate_split(model, loader, device, fpr_budget: float, calibrate: bool = True) -> ValResult:
@@ -440,9 +480,11 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
         if wb:
             wb.log({f"val/{k}": v for k, v in val.as_dict().items()}, step=state.global_step)
 
-        # Selection on FPR at the budget, NOT on loss.
-        if val.fpr_at_budget <= state.best_metric:
+        # Budget is the constraint, FNR is the objective. See is_better_checkpoint.
+        if is_better_checkpoint(val, state, fpr_budget):
             state.best_metric = val.fpr_at_budget
+            state.best_fnr = val.fnr
+            state.best_in_budget = val.fpr_at_budget <= fpr_budget
             state.best_step = state.global_step
             state.temperature = val.temperature
             state.threshold = val.threshold

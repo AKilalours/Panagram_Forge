@@ -157,6 +157,19 @@ so 98% of documents are a single window and mean equals max for them. The claim 
 pooling inflates FPR on long documents is not tested by these runs; it is carried over from
 the in-distribution work and stays a stated expectation, not a measured one here.
 
+**"Best checkpoint" meant "last checkpoint" in these runs.** Selection compared
+`fpr_at_budget` against the best so far, and that number is measured at a threshold moved
+until the budget is met, so it is pinned by construction. Every evaluation of both arms
+reported 0.000502, one false positive in 1,993 human documents, and a `<=` comparison then
+handed the win to the final epoch. `best.pt` is byte-identical to `last.pt` in both runs.
+
+This does not invalidate the numbers above: the reported metrics were computed on the
+checkpoint that was actually saved, and at two epochs the last one is a defensible choice
+anyway. What it invalidates is any claim that a checkpoint was *selected*. Selection is now
+FNR at the budget, with the budget as a constraint rather than the objective, and
+`tests/unit/test_checkpoint_selection.py` fails against the old rule. Not applied to these
+runs, which would need retraining.
+
 **The re-fit threshold is not available at deployment.** It is used only to put the arms at
 the same operating point. Nothing in the matched-budget table describes what a user would
 get.
