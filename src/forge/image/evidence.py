@@ -191,25 +191,43 @@ def _manipulation_stream(findings: list[Finding]) -> Stream:
     )
 
 
-def _visual_stream(detector_available: bool, probability: float | None) -> Stream:
-    """The detector. The only stream entitled to produce a verdict."""
+def _visual_stream(
+    detector_available: bool,
+    probability: float | None,
+    model_id: str = "",
+    polarity_verified: bool = False,
+) -> Stream:
+    """The detector. The only stream entitled to produce a verdict.
+
+    The note said "calibrated on validation data" whatever the detector was. That was false
+    for any detector this project has ever loaded: there is no image validation split, so
+    nothing has been calibrated. A confident sentence about calibration next to a number is
+    worse than no sentence, because it invites the reader to trust the figure precisely
+    where it is least trustworthy.
+    """
     if not detector_available or probability is None:
         return Stream(
             key="visual_model",
-            label="Visual model (DINOv3)",
+            label="Visual detector",
             strength=0,
             direction=NEUTRAL,
-            summary="Detector not trained",
+            summary="No visual detector loaded",
             available=False,
-            note="the only stream that can answer the question; it is not available yet",
+            note="the only stream that can answer the question",
         )
+    note = "uncalibrated: the model's own output, no validation split exists for it"
+    if not polarity_verified:
+        # Until the AI class is confirmed against labelled images, the DIRECTION of this
+        # number is a claim about the model's label order, not a measurement.
+        note = ("POLARITY UNVERIFIED: which class means AI has not been confirmed against "
+                "labelled images, so this number may be inverted. " + note)
     return Stream(
         key="visual_model",
-        label="Visual model (DINOv3)",
+        label=f"Visual detector{f' ({model_id})' if model_id else ''}",
         strength=int(round(abs(probability - 0.5) * 200)),
         direction=TOWARD_AI if probability >= 0.5 else TOWARD_CAPTURE,
         summary=f"P(AI) = {probability:.2%}",
-        note="calibrated on validation data; see the model card for the operating point",
+        note=note,
     )
 
 
@@ -233,10 +251,12 @@ def build_evidence(
     findings: list[Finding],
     detector_available: bool = False,
     probability: float | None = None,
+    model_id: str = "",
+    polarity_verified: bool = False,
 ) -> Evidence:
     """Assemble the evidence panel. Never returns an overall authenticity score."""
     streams = [
-        _visual_stream(detector_available, probability),
+        _visual_stream(detector_available, probability, model_id, polarity_verified),
         _camera_stream(findings),
         _provenance_stream(findings),
         _declaration_stream(findings),

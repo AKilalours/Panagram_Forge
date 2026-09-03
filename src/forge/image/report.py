@@ -422,6 +422,7 @@ def build_report(
             detector_info = {
                 "available": True, "model_id": detection.model_id,
                 "calibrated": detection.calibrated, "labels": list(detection.labels),
+                "polarity_verified": detection.polarity_verified,
             }
         except Exception as error:  # noqa: BLE001 - absence is reported, never substituted
             detector_info = {"available": False, "reason": str(error)}
@@ -435,6 +436,8 @@ def build_report(
             findings,
             detector_available=detection is not None,
             probability=detection.ai_probability if detection else None,
+            model_id=detection.model_id if detection else "",
+            polarity_verified=bool(detection and detection.polarity_verified),
         ),
     )
 
@@ -461,6 +464,10 @@ def build_report(
                 reason=(
                     "Uncalibrated probability from a baseline visual detector. The decision "
                     "band is a documented default, not a threshold fitted on validation data."
+                    if detection.polarity_verified else
+                    "POLARITY UNVERIFIED. Which class this detector calls AI has not been "
+                    "confirmed against labelled images, so this verdict may be inverted. "
+                    "Run scripts/image_detector_probe.py before reading it as a result."
                 ),
             )
             if detection is not None

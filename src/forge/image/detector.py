@@ -72,6 +72,7 @@ class Detection:
     model_id: str
     calibrated: bool = False
     labels: tuple[str, ...] = ()
+    polarity_verified: bool = False
 
     @property
     def verdict(self) -> str:
@@ -113,6 +114,35 @@ def resolve_ai_index(id2label: dict) -> int:
     return ai[0]
 
 
+POLARITY_RECORD = "reports/experiments/image_detector_polarity.json"
+
+
+def verified_polarity(model_id: str) -> dict | None:
+    """The measured AI index for this model, if it has been measured.
+
+    A model's own `id2label` is documentation, and documentation can be wrong: the first
+    detector loaded here scored a Canon photograph at 99.9% AI and a ChatGPT image carrying
+    an IPTC trainedAlgorithmicMedia marker at 1.5%, a clean inversion. So a measurement on
+    labelled images, when one exists for THIS model, outranks the names. Written by
+    scripts/image_detector_probe.py. Never edited by hand to make an output look better.
+    """
+    import json
+    import pathlib
+
+    path = pathlib.Path(POLARITY_RECORD)
+    if not path.exists():
+        return None
+    try:
+        record = json.loads(path.read_text())
+    except Exception:  # noqa: BLE001 - an unreadable record is no record
+        return None
+    if record.get("model_id") != model_id:
+        return None                      # measured for a different model; does not transfer
+    if not isinstance(record.get("verified_ai_index"), int):
+        return None
+    return record
+
+
 @dataclass
 class ImageDetector:
     model_id: str
@@ -120,6 +150,8 @@ class ImageDetector:
     labels: tuple[str, ...]
     model: object
     processor: object
+    polarity_verified: bool = False
+    polarity_record: dict | None = None
 
     def probability(self, data: bytes) -> float:
         import torch
@@ -138,6 +170,7 @@ class ImageDetector:
             model_id=self.model_id,
             calibrated=False,
             labels=self.labels,
+            polarity_verified=self.polarity_verified,
         )
 
 
@@ -154,12 +187,18 @@ def _load_one(model_id: str) -> ImageDetector:
     id2label = getattr(model.config, "id2label", None) or {}
     if len(id2label) < 2:
         raise LabelPolarityUnknown(f"{model_id} exposes no usable labels: {id2label}")
+    ai_index = resolve_ai_index(id2label)
+    record = verified_polarity(model_id)
+    if record is not None:
+        ai_index = int(record["verified_ai_index"])
     return ImageDetector(
         model_id=model_id,
-        ai_index=resolve_ai_index(id2label),
+        ai_index=ai_index,
         labels=tuple(str(v) for _, v in sorted(id2label.items(), key=lambda kv: int(kv[0]))),
         model=model,
         processor=processor,
+        polarity_verified=record is not None,
+        polarity_record=record,
     )
 
 
@@ -199,4 +238,6 @@ def detector_state() -> dict:
         "labels": list(detector.labels),
         "ai_index": detector.ai_index,
         "calibrated": False,
+        "polarity_verified": detector.polarity_verified,
+        "polarity_record": detector.polarity_record,
     }

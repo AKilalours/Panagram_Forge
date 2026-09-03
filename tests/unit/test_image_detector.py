@@ -98,3 +98,81 @@ def test_a_named_model_is_not_silently_replaced_by_a_fallback(monkeypatch):
         D.load_detector()
     assert tried == ["someone/specific-model"], f"fell back to {tried}"
     D.load_detector.cache_clear()
+
+
+def test_a_measurement_outranks_the_model_s_own_label_names(tmp_path, monkeypatch):
+    """THE REGRESSION. id2label is documentation, and documentation can be wrong.
+
+    Trusting the names produced "AI DETECTED 99.9%" on a Canon photograph and
+    "NO AI DETECTED 1.5%" on a ChatGPT image carrying an IPTC trainedAlgorithmicMedia
+    marker. A clean inversion, in the direction that accuses a real photographer.
+    """
+    import json
+
+    import forge.image.detector as D
+
+    monkeypatch.chdir(tmp_path)
+    record = tmp_path / D.POLARITY_RECORD
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({
+        "model_id": "some/detector", "verified_ai_index": 0,
+        "name_based_ai_index": 1, "inverted_relative_to_labels": True,
+    }))
+    assert D.verified_polarity("some/detector")["verified_ai_index"] == 0
+
+
+def test_a_measurement_for_a_different_model_does_not_transfer(tmp_path, monkeypatch):
+    """Polarity is a property of one model. Reusing another's is how a fix becomes a bug."""
+    import json
+
+    import forge.image.detector as D
+
+    monkeypatch.chdir(tmp_path)
+    record = tmp_path / D.POLARITY_RECORD
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"model_id": "other/model", "verified_ai_index": 0}))
+    assert D.verified_polarity("some/detector") is None
+
+
+def test_no_record_means_unverified_rather_than_assumed_correct(tmp_path, monkeypatch):
+    import forge.image.detector as D
+
+    monkeypatch.chdir(tmp_path)
+    assert D.verified_polarity("some/detector") is None
+
+
+def test_an_unreadable_record_is_treated_as_absent(tmp_path, monkeypatch):
+    """A corrupt file must not be read as a confirmation."""
+    import forge.image.detector as D
+
+    monkeypatch.chdir(tmp_path)
+    record = tmp_path / D.POLARITY_RECORD
+    record.parent.mkdir(parents=True)
+    record.write_text("{not json")
+    assert D.verified_polarity("some/detector") is None
+
+
+def test_an_unverified_detector_says_so_in_the_evidence_panel():
+    """The direction of the number is a claim until it is measured. Say which."""
+    from forge.image.evidence import build_evidence
+
+    streams = build_evidence([], detector_available=True, probability=0.99,
+                             model_id="m", polarity_verified=False).streams
+    visual = next(s for s in streams if s.key == "visual_model")
+    assert "POLARITY UNVERIFIED" in visual.note
+
+    verified = build_evidence([], detector_available=True, probability=0.99,
+                              model_id="m", polarity_verified=True).streams
+    assert "POLARITY UNVERIFIED" not in next(
+        s for s in verified if s.key == "visual_model").note
+
+
+def test_the_visual_stream_never_claims_calibration_it_does_not_have():
+    """It said "calibrated on validation data" for a detector with no validation split."""
+    from forge.image.evidence import build_evidence
+
+    streams = build_evidence([], detector_available=True, probability=0.7,
+                             model_id="m", polarity_verified=True).streams
+    note = next(s for s in streams if s.key == "visual_model").note
+    assert "calibrated on validation data" not in note
+    assert "uncalibrated" in note
