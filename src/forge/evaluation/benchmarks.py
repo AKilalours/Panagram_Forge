@@ -202,13 +202,67 @@ def parse_hc3(rows: Iterable[dict]) -> list[BenchmarkDoc]:
 
 # --------------------------------------------------------------------------- loading
 
+# datasets v4 removed support for loading-script datasets. HC3 is still published as a
+# script (HC3.py), so the ordinary path now raises:
+#
+#     RuntimeError: Dataset scripts are no longer supported, but found HC3.py
+#
+# The Hub keeps an auto-generated parquet conversion of every dataset on the branch
+# refs/convert/parquet, which needs no script. The fallback below reads that instead.
+#
+# Pinning datasets<4 would be the other fix and is worse: it freezes a core dependency
+# across the whole project to work around one benchmark's packaging, and the pin would
+# outlive the reason for it.
+_SCRIPTS_GONE = "Dataset scripts are no longer supported"
+PARQUET_BRANCH = "refs/convert/parquet"
+
+
+def _parquet_conversion(repo: str, config: str | None, split: str):  # pragma: no cover
+    """Read a dataset's auto-generated parquet conversion.
+
+    Files on that branch are laid out <config>/<split>/*.parquet. The revision is passed in
+    the path because it contains slashes, which have to survive as part of the ref rather
+    than being read as directories.
+    """
+    from datasets import load_dataset
+    from huggingface_hub import list_repo_files
+
+    files = [
+        f
+        for f in list_repo_files(repo, repo_type="dataset", revision=PARQUET_BRANCH)
+        if f.endswith(".parquet")
+    ]
+    if config:
+        scoped = [f for f in files if f.split("/")[0] == config]
+        files = scoped or files
+    scoped = [f for f in files if f"/{split}/" in f or f"-{split}-" in f]
+    files = scoped or files
+    if not files:
+        raise RuntimeError(
+            f"no parquet conversion found for {repo} (config={config}, split={split})"
+        )
+    revision = PARQUET_BRANCH.replace("/", "%2F")
+    urls = [f"hf://datasets/{repo}@{revision}/{f}" for f in sorted(files)]
+    return load_dataset("parquet", data_files=urls, split="train", streaming=True)
+
+
 def load_hf(repo: str, config: str | None, split: str) -> Iterator[dict]:  # pragma: no cover
-    """Streaming load. Not exercised: no network in the development environment."""
+    """Streaming load, with a fallback for datasets still published as scripts."""
     try:
         from datasets import load_dataset
     except ImportError as e:
         raise RuntimeError("needs the `data` extra: pip install -e '.[data]'") from e
-    yield from load_dataset(repo, name=config, split=split, streaming=True)
+    try:
+        yield from load_dataset(repo, name=config, split=split, streaming=True)
+    except RuntimeError as error:
+        if _SCRIPTS_GONE not in str(error):
+            raise
+        print(
+            f"[benchmarks] {repo} is a script dataset; reading the parquet conversion "
+            f"on {PARQUET_BRANCH}",
+            flush=True,
+        )
+        yield from _parquet_conversion(repo, config, split)
 
 
 def load_raid(split: str = "extra") -> list[BenchmarkDoc]:  # pragma: no cover
