@@ -8,6 +8,7 @@ worse than no stub, because it hides that the work has not been done.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import typer
 
@@ -238,17 +239,58 @@ def mine(
     config: str = typer.Option(..., "--config"),
     reserve: str = typer.Option("data/reserve", "--reserve", help="reserve pool parquet root"),
     out: str = typer.Option("reports/experiments", "--out"),
-    model: str = typer.Option(None, "--model", help="path to a trained detector"),
+    arm: str = typer.Option("mirror", "--arm", help="which trained arm mines: baseline|mirror"),
+    round_name: str = typer.Option("mining_run_001", "--round"),
+    limit: int = typer.Option(0, "--limit", help="cap reserve documents scanned, 0 for all"),
+    min_confidence: float = typer.Option(0.90, "--min-confidence"),
 ) -> None:
-    """Phase 4: hard negative mining pass over the human reserve pool."""
+    """Phase 4: hard negative mining pass over the human reserve pool.
+
+    Scans reserve documents with a trained arm, keeps the ones it calls AI at high
+    confidence, clusters those failures into an atlas and selects across clusters. Writes
+    the round to `--out`.
+
+    This used to load the config, raise if --model was absent, and RETURN if it was present,
+    so a caller who satisfied the precondition got exit code 0 and no work. The round was
+    never invoked. `run_round` is called below.
+
+    Mining scores with the same aggregation evaluation uses, mean over windows, because the
+    false positives being characterised have to be the ones production would make.
+    """
+    from forge.hard_negative.reserve import CheckpointScorer, load_reserve
+    from forge.hard_negative.run import run_round
+    from forge.inference.scorer import ArmUnavailable
+
     cfg.load(config)
-    if model is None:
+    try:
+        scorer = CheckpointScorer(arm)
+    except ArmUnavailable as error:
         raise PhaseNotImplemented(
-            "mining needs a trained detector to score the reserve pool, and Phase 3 "
-            "training has not run. The mining, atlas and selection code is implemented "
-            "and tested against synthetic failure structure; pass --model once a "
-            "checkpoint exists. See docs/roadmap.md."
-        )
+            f"mining needs a trained detector to score the reserve pool: {error}"
+        ) from None
+
+    docs = load_reserve(reserve, limit or None)
+    typer.echo(
+        f"scanning {len(docs)} reserve documents with {scorer.model_version} "
+        f"at operating threshold {scorer.threshold:.6f}, mining gate {min_confidence}"
+    )
+    round_ = run_round(
+        docs, scorer,
+        operating_threshold=scorer.threshold,
+        round_name=round_name,
+        min_confidence=min_confidence,
+    )
+    path = round_.write(Path(out) / f"{round_name}.json")
+    stats = round_.stats.as_dict()
+    typer.echo(
+        f"scanned {stats['scanned']}, "
+        f"errors at operating threshold {stats['errors_at_operating_threshold']} "
+        f"({stats['error_rate']:.4%}), "
+        f"above the confidence gate {stats['above_confidence_gate']}, "
+        f"selected {stats['selected']}"
+    )
+    typer.echo(f"train refs {len(round_.train_refs)}, holdout refs {len(round_.holdout_refs)}")
+    typer.echo(f"written {path}")
 
 
 @app.command()
