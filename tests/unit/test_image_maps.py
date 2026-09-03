@@ -131,3 +131,39 @@ def test_skipping_stability_does_not_change_any_other_finding():
     assert off.evidence.as_dict() == on.evidence.as_dict()
     assert off.authenticity == on.authenticity
     assert off.manipulation == on.manipulation
+
+
+def test_every_stage_reports_its_own_cost():
+    """"53 seconds" is not actionable. WHICH stage is.
+
+    Without a per-stage breakdown the only way to find the expensive part is to guess, and
+    guessing is how people optimise the stage that was already fast.
+    """
+    from forge.image.report import build_report
+
+    frame = _frame(flatten_patch=False)
+    r = build_report(frame, with_stability=True)
+    for stage in ("forensics", "perceptual_hash", "evidence", "transform_stability", "detector"):
+        assert stage in r.timings_ms, f"{stage} reports no cost"
+        assert isinstance(r.timings_ms[stage], int)
+    assert r.timings_ms["detector"] == 0, "there is no image model; its cost must read zero"
+    assert r.as_dict()["timings_ms"] == r.timings_ms
+
+
+def test_the_stage_costs_are_consistent_with_the_total():
+    """A breakdown that does not add up is worse than no breakdown."""
+    from forge.image.report import build_report
+
+    r = build_report(_frame(flatten_patch=False), with_stability=True)
+    measured = sum(r.timings_ms.values())
+    assert measured <= r.elapsed_ms + 5, (
+        f"stages sum to {measured} ms against a total of {r.elapsed_ms} ms"
+    )
+
+
+def test_a_skipped_stage_reports_no_cost_rather_than_zero_cost():
+    """Absent, not free. A 0 ms transform-stability row would read as "instant"."""
+    from forge.image.report import build_report
+
+    off = build_report(_frame(flatten_patch=False), with_stability=False)
+    assert "transform_stability" not in off.timings_ms

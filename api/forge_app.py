@@ -106,8 +106,14 @@ async def analyze_image(
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail=f"file exceeds {MAX_IMAGE_BYTES} bytes")
 
+    import time
+
+    mark = time.perf_counter()
+    preview = _thumbnail(data)
+    preview_ms = int((time.perf_counter() - mark) * 1000)
+
     report = build_report(
-        data, filename=file.filename or "upload", preview=_thumbnail(data),
+        data, filename=file.filename or "upload", preview=preview,
         with_stability=stability,
     )
     fmt = report.by_name("file_type")
@@ -122,7 +128,11 @@ async def analyze_image(
     # which is a thing a reader can go and check by looking. A map that cannot be computed
     # is omitted rather than faked, so this list can legitimately be short or empty.
     payload = report.as_dict()
+    mark = time.perf_counter()
     payload["maps"] = build_maps(data)
+    payload["timings_ms"] = dict(payload.get("timings_ms") or {})
+    payload["timings_ms"]["preview"] = preview_ms
+    payload["timings_ms"]["forensic_maps"] = int((time.perf_counter() - mark) * 1000)
     payload["maps_note"] = (
         "Forensic residual maps, not detector saliency. No model is involved. Each map is "
         "normalized within this image, so brightness is relative to this frame and is not "
@@ -251,6 +261,11 @@ _PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
  margin-top:4px}
 .scorenote{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.45;text-align:left}
 .dir{display:block;margin-top:3px;font-size:11px;color:var(--muted);font-style:italic}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;
+ background:var(--muted);vertical-align:middle}
+.dot.ok{background:var(--ok)} .dot.na{background:var(--muted)}
+.techrow{padding:2px 0 7px} .techrow .row{border:0;padding-bottom:2px}
+.tech{font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
 .secondary{margin-top:9px;padding:8px 15px;border-radius:8px;border:1px solid var(--line);
  background:var(--chip);color:var(--ink);font:inherit;font-weight:560;cursor:pointer}
 .secondary:hover{border-color:var(--accent);color:var(--accent)}
@@ -320,7 +335,9 @@ footer{max-width:1180px;margin:0 auto;padding:6px 22px 36px;color:var(--muted);f
     <div class="tab on" data-tab="image">Image</div>
     <div class="tab" data-tab="text">Text</div>
   </div>
-  <div class="status">CPU &middot; forensics live &middot; detectors pending training</div>
+  <div class="status" id="status">
+    <span class="dot na"></span><span id="statusText">CPU &middot; checking detectors&hellip;</span>
+  </div>
 </header>
 <main>
   <section id="pane-image">
@@ -353,6 +370,27 @@ const row=(k,v,st)=>`<div class="row"><span class="k">${esc(k)}</span><span clas
   v!=null&&v!==''?esc(v):'<span class="pill na">not available</span>'} ${
   st?`<span class="pill ${cls(st)}">${esc(lbl(st))}</span>`:''}</span></div>`;
 const rows=list=>list.map(r=>row(r.label,r.value,r.status)).join('');
+
+// Manipulation rows carry raw statistics, not probabilities. "Resizing 373.65" reads as a
+// quantity of editing; it is the strength of a periodic pattern on an open-ended scale. So
+// the chip is the headline and the number is demoted to a technical line beneath it.
+const techRows=list=>list.map(r=>`<div class="techrow">
+  <div class="row"><span class="k">${esc(r.label)}</span><span class="v">${
+    r.status?`<span class="pill ${cls(r.status)}">${esc(lbl(r.status))}</span>`
+            :'<span class="pill na">not available</span>'}</span></div>
+  ${r.value!=null&&r.value!==''?`<div class="tech">raw statistic ${esc(r.value)}</div>`:''}
+  ${r.note?`<div class="tech">${esc(r.note)}</div>`:''}</div>`).join('');
+
+// System state, read from the server rather than asserted in markup. A page that claims
+// "detector ready" while nothing is loaded is the same class of lie as a fabricated score.
+(async()=>{
+  let s={}; try{ s=await (await fetch('/v1/text/arms')).json(); }catch(e){}
+  const ready=Object.values(s).filter(v=>v==='ready').length;
+  const dot=$('#status .dot'), txt=$('#statusText');
+  txt.textContent='CPU · text detector '+(ready?`ready (${ready}/2 arms)`:'not loaded')
+    +' · image detector not trained';
+  dot.className='dot '+(ready?'ok':'na');
+})();
 
 const drop=$('#drop'),input=$('#file');
 drop.onclick=()=>input.click();
@@ -446,7 +484,7 @@ function renderImage(d){
   h+=`<div class="card"><h3>AI attribution</h3>
     ${row('Attributed area',at.ai_area_fraction)}
     ${row('Mixed content',at.mixed_content)}
-    ${row('Model saliency heatmap',at.heatmap)}
+    ${row('AI attribution heatmap',at.heatmap)}
     <p class="caveat">${esc(at.reason)}</p></div>`;
 
   const maps=d.maps||[];
@@ -462,7 +500,7 @@ function renderImage(d){
     :'<p class="caveat">No map could be computed from this file.</p>'}
     <p class="caveat">${esc(d.maps_note||'')}</p></div>`;
 
-  h+=`<div class="card"><h3>Manipulation analysis</h3>${rows(d.manipulation)}
+  h+=`<div class="card"><h3>Manipulation analysis</h3>${techRows(d.manipulation)}
     <p class="caveat">The values are raw statistics from this file, not probabilities. A
     resampling score of 373 is not "373 units of editing": it is the strength of a periodic
     pattern, and the chip beside it is how that compares to an ordinary file. Post-processing
@@ -485,9 +523,25 @@ function renderImage(d){
   h+=`<div class="card wide"><h3>What this cannot tell you</h3>
     <ul class="cannot">${d.cannot_conclude.map(l=>'<li>'+esc(l)+'</li>').join('')}</ul></div>`;
 
-  h+=`<div class="card wide"><h3>Run</h3>${row('Analysis time',d.elapsed_ms+' ms (CPU)')}
+  const T=d.timings_ms||{}, order=['preview','forensics','perceptual_hash','evidence',
+    'forensic_maps','transform_stability','detector'];
+  const NAME={preview:'Preview thumbnail',forensics:'Forensic analysis',
+    perceptual_hash:'Perceptual hash',evidence:'Evidence engine',
+    forensic_maps:'Forensic maps',transform_stability:'Transform stability (opt-in)',
+    detector:'Image detector inference'};
+  const total=d.elapsed_ms;
+  h+=`<div class="card wide"><h3>Run</h3>
+    ${order.filter(k=>k in T).map(k=>{
+      const ms=T[k], share=total?Math.round(100*ms/total):0;
+      return `<div class="row"><span class="k">${esc(NAME[k]||k)}</span>
+        <span class="v">${k==='detector'&&ms===0?'<span class="pill na">not loaded</span>'
+          :ms.toLocaleString()+' ms'+(share>=5?' · '+share+'%':'')}</span></div>`;
+    }).join('')}
+    ${row('Total',total.toLocaleString()+' ms (CPU)')}
     ${row('Report version',d.report_version)}
-    ${row('Image detector','not loaded','not_checked')}</div></div>`;
+    <p class="caveat">Measured per stage, not estimated. The detector row is zero because
+    no image model exists yet; the slot is here so its cost is visible the moment one does.
+    </p></div></div>`;
   $('#outImage').innerHTML=h;
   const btn=$('#runStability');
   if(btn) btn.onclick=()=>{ window._forgeStability=true;

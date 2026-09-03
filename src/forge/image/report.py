@@ -111,6 +111,10 @@ class Report:
     elapsed_ms: int = 0
     report_version: str = REPORT_VERSION
     cannot_conclude: list[str] = field(default_factory=list)
+    # Per stage, in milliseconds. Measured, not estimated. Without this, "53 seconds" is
+    # a number nobody can act on: the only useful next question is WHICH stage, and
+    # guessing at that is how people optimise the part that was already fast.
+    timings_ms: dict = field(default_factory=dict)
 
     def by_name(self, name: str) -> Finding | None:
         return next((f for f in self.findings if f.name == name), None)
@@ -133,6 +137,7 @@ class Report:
             "elapsed_ms": self.elapsed_ms,
             "report_version": self.report_version,
             "cannot_conclude": self.cannot_conclude,
+            "timings_ms": self.timings_ms,
         }
 
 
@@ -340,13 +345,29 @@ def build_report(
     import time
 
     started = time.perf_counter()
-    findings = analyze(data)
-    try:
-        fingerprint = to_hex(dhash(data))
-    except Exception:  # noqa: BLE001
-        fingerprint = ""
-    stability, stability_available = _stability_rows(data) if with_stability else ([], False)
-    evidence = build_evidence(findings, detector_available=False, probability=None)
+    timings: dict[str, int] = {}
+
+    def _timed(name, fn, default=None):
+        mark = time.perf_counter()
+        try:
+            return fn()
+        except Exception:  # noqa: BLE001 - a stage that fails still reports its cost
+            return default
+        finally:
+            timings[name] = int((time.perf_counter() - mark) * 1000)
+
+    findings = _timed("forensics", lambda: analyze(data), default=[])
+    fingerprint = _timed("perceptual_hash", lambda: to_hex(dhash(data)), default="")
+    stability, stability_available = (
+        _timed("transform_stability", lambda: _stability_rows(data), default=([], False))
+        if with_stability
+        else ([], False)
+    )
+    evidence = _timed(
+        "evidence",
+        lambda: build_evidence(findings, detector_available=False, probability=None),
+    )
+    timings["detector"] = 0  # no image model yet; the slot exists so its cost is visible
 
     return Report(
         filename=filename,
@@ -364,4 +385,5 @@ def build_report(
         preview=preview,
         elapsed_ms=int((time.perf_counter() - started) * 1000),
         cannot_conclude=_cannot_conclude(findings, stability),
+        timings_ms=timings,
     )
