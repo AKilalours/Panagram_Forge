@@ -26,21 +26,33 @@ They are too large for git and they are derived artifacts, so `outputs/` stays i
 
     huggingface-cli repo create forge-detect --type space --space_sdk docker
 
-## 3. Push this repository to it
+## 3. Push this repository to the Space
 
-The Space needs the whole repository, because `api/`, `src/forge/` and
-`reports/experiments/` are all read at runtime. The Dockerfile lives at `space/Dockerfile`,
-so it is copied to the root of the Space build context.
+The Space needs the whole repository: `api/`, `src/forge/` and `reports/experiments/` are
+all read at runtime. Two files have to sit at the ROOT of the Space, which they do not in
+this repo: the Dockerfile, and a README carrying the YAML front matter that tells Spaces
+which SDK and port to use.
 
-    git remote add space https://huggingface.co/spaces/AKilalours/forge-detect
+Do that on a dedicated `space` branch rather than on `master`, so the repository a reviewer
+reads keeps its own README and gains no stray root Dockerfile. Re-run these five commands
+whenever you want to redeploy; they rebuild the branch from whatever master is:
+
+    git checkout -B space master
     cp space/Dockerfile Dockerfile
-    cp space/README.md README-space.md      # keep the repo README; the Space needs its own
-    git add Dockerfile && git commit -m "space: docker build"
-    git push space master:main
+    cp space/README.md README.md
+    git add -f Dockerfile README.md
+    git commit -m "space: root Dockerfile and Space README"
 
-The Space README must be the one with the YAML front matter, so on the Space branch swap it
-in. The simplest reliable route is a dedicated `space` branch whose README is
-`space/README.md` and whose root Dockerfile is `space/Dockerfile`.
+    git remote add space https://huggingface.co/spaces/AKilalours/forge-detect   # once
+    git push -f space space:main
+    git checkout master
+
+`git push -f` is correct here and only here: the `space` branch is a build artifact rebuilt
+from master every time, not history anyone else pulls. Never force-push `master`.
+
+The Docker build context is the repository root, and `space/Dockerfile` already refers to
+`space/requirements.txt` and `space/serve.py` by those paths, so copying it to the root
+changes nothing about how it builds.
 
 ## 4. Set the secrets
 
@@ -58,5 +70,15 @@ takes a few minutes. After that a text analysis is a second or two and an image 
 about three, on two vCPUs.
 
 If the weights repo is unreachable the app still starts: the text tab reports why, and the
-image tab, the results tab and the forensics all work. An interface that dies because
+image tab and every forensic panel still work. An interface that dies because
 weights are missing is worse than one that says so.
+
+## 6. Check it before you send the link
+
+    curl -s https://AKilalours-forge-detect.hf.space/health | python -m json.tool
+
+Expect `text_detector_loaded: true`, `image_detector_loaded: true`, and
+`polarity_verified: true`. The Space resolves its own Linux wheels, so a version that
+behaves differently from the local venv shows up here rather than in a stranger's
+screenshot. If `text_detector_loaded` is false, the message under `text_arms` names the
+missing path, which is almost always the weights repo or the token rather than the code.
