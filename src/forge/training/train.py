@@ -217,20 +217,41 @@ def validate_config(cfg: dict) -> str:
     return arm
 
 
-def _reference_arm(dcfg: dict):
-    """Load the arm whose length distribution this arm should be capped to match.
+# data.ai_reference accepts this instead of a directory: match the AI pool's length
+# distribution to the HUMAN corpus rather than to the other arm.
+REFERENCE_HUMAN = "human"
 
-    Generation rejected 85% of mirrors for length overshoot, and the survivors skew long,
-    while the control arm's lengths track the human corpus. Capping both arms to the same
-    COUNT would still leave them differing in length distribution, which a detector can
-    learn, so a win for either arm would have an obvious alternative explanation.
 
-    Set data.ai_reference to the mirror arm's directory in BOTH configs. The mirror arm
-    then matches itself, which is a no-op, and the control arm is reshaped to match it.
+def _reference_arm(dcfg: dict, human_rows=None):
+    """Load the pool whose length distribution this arm's AI documents should match.
+
+    WHY THIS CHANGED, and it is the difference between a result and an artifact.
+
+    The first version pointed both arms at the MIRROR arm's directory: the mirror arm
+    matched itself (a no-op) and the control arm was reshaped to match it. That makes the
+    two arms comparable to each other, which is what it was written for, and does nothing
+    about the gap between AI and HUMAN text. Both arms were left with AI documents running
+    about 20% longer than the human corpus, and a detector reached AUROC 0.70 on the mirror
+    arm and 0.72 on the control arm WITHOUT READING A WORD.
+
+    Setting ai_reference to "human" reshapes each arm's AI pool to the human length
+    distribution instead. Length then carries almost no signal, and because both arms are
+    matched to the SAME reference they stay comparable to each other as well. It is strictly
+    better than the old behaviour on both axes.
+
+    Measured on the real corpora: 27,744 documents per arm survive the match, against an
+    ai_cap of 20,000, so this costs nothing the experiment was going to use.
     """
     root = dcfg.get("ai_reference")
     if not root:
         return None
+    if root == REFERENCE_HUMAN:
+        if human_rows is None:
+            raise RuntimeError(
+                'data.ai_reference is "human" but no human corpus was passed to match '
+                "against. This is a wiring bug, not a config error."
+            )
+        return human_rows
     from forge.training.data import load_examples
 
     return load_examples(ai_root=root)
@@ -273,7 +294,14 @@ def run(config: dict | str, smoke: bool = False, resume: str | None = None) -> d
         human_root=paths.get("human"), ai_root=paths.get("ai") or paths.get("mirror"),
         mixed_root=paths.get("mixed"), limit=limit, expect_arm=arm,
         ai_cap=dcfg.get("ai_cap"),
-        ai_reference=_reference_arm(dcfg),
+        ai_reference=_reference_arm(
+            dcfg,
+            human_rows=(
+                load_examples(human_root=paths.get("human"))
+                if dcfg.get("ai_reference") == REFERENCE_HUMAN
+                else None
+            ),
+        ),
         human_cap=dcfg.get("human_cap"),
     )
     if not examples:

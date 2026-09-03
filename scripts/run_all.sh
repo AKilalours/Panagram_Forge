@@ -87,34 +87,17 @@ say "control arm: $RANDOMS documents"
 [ "$RANDOMS" -lt 1000 ] && { say "ABORT: control arm is empty"; exit 1; }
 
 # ------------------------------------------------------------------ 4. the length gate
-say "measuring the length confound on both arms"
-python scripts/diagnose_arm.py configs/training/mirror_minimal.yaml   >> "$LOG" 2>&1
-python scripts/diagnose_arm.py configs/training/baseline_minimal.yaml >> "$LOG" 2>&1
-
-WORST=$(python - <<'PY'
-import numpy as np
-from forge.common.config import load
-from forge.evaluation import metrics as M
-from forge.training.data import load_examples
-from forge.training.train import validate_config
-
-worst = 0.0
-for path in ("configs/training/mirror_minimal.yaml", "configs/training/baseline_minimal.yaml"):
-    cfg = load(path); paths = cfg.get("paths", {})
-    rows = load_examples(human_root=paths.get("human"),
-                         ai_root=paths.get("ai") or paths.get("mirror"),
-                         limit=None, expect_arm=validate_config(cfg))
-    y = np.array([int(r.label) for r in rows])
-    n = np.array([len(r.text.split()) for r in rows], dtype=float)
-    worst = max(worst, abs(float(M.auroc(y, n)) - 0.5))
-print(f"{worst:.4f}")
-PY
-)
-say "worst length-only deviation from chance: $WORST (was 0.3408 before the fix)"
-if python -c "import sys; sys.exit(0 if float('$WORST') > 0.15 else 1)"; then
-  say "STOPPING BEFORE TRAINING. Length still separates the classes by more than 0.15 from"
-  say "chance, so a detector could reach that score without reading a word. Read the two"
-  say "diagnose_arm blocks above: the per-class medians say which direction it went."
+#
+# Measured on the ASSEMBLED training set, not the raw arm directories. The first version of
+# this gate loaded the pools with no ai_cap, no human_cap and no length matching, so it
+# refused to train because of a confound the loader was about to remove. A check that
+# reports a real number about the wrong data is the failure this project keeps finding.
+say "measuring the length confound on the assembled training set"
+python scripts/length_gate.py 0.15 >> "$LOG" 2>&1
+GATE=$?
+if [ "$GATE" -ne 0 ]; then
+  say "STOPPING BEFORE TRAINING. See the length_gate block above: it prints each arm's"
+  say "human and AI medians and the length-only AUROC on the data that would be trained."
   exit 2
 fi
 say "gate passed"
