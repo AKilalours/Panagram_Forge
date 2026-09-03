@@ -208,3 +208,43 @@ def test_localisation_and_attribution_are_not_described_as_the_same_thing():
     assert "occlusion attribution" in reason, (
         "the reason must point at the map that DOES exist, or it reads as a flat denial"
     )
+
+
+def test_the_page_has_exactly_two_tabs():
+    """Text and Image, the two live detectors. The Results tab was removed.
+
+    Measured numbers live in docs/evaluation.md and docs/writeup.md next to the method that
+    produced them. A third tab restating them is a second copy to keep in step, and this
+    project has already shipped several wrong answers that were exactly that: one place
+    describing what another place does.
+    """
+    body = page()
+    # Count data-tab, not class="tab": the wrapper is <div class="tabs"> and matches too.
+    assert body.count("data-tab=") == 2, "the tab strip is no longer Text and Image only"
+    assert 'data-tab="text"' in body and 'data-tab="image"' in body
+    for gone in ('data-tab="results"', "pane-results", "outResults", "loadResults"):
+        assert gone not in body, f"{gone} is still in the page"
+
+
+def test_no_operating_point_sentence_sits_under_the_verdict():
+    """It read "Not AI below 0.319, AI at or above 0.319", which contradicts itself.
+
+    When the human ceiling and the confident-AI floor round to the same three decimals, the
+    uncertain band is narrower than the rounding and the sentence says a number is both
+    below and at-or-above the same value. The figures stay in the payload's `band`, in the
+    Details section and in /health.
+    """
+    from forge.image.report import Assessment, _assessment
+
+    class _Detection:
+        ai_probability = 0.07
+        threshold_ai = 0.3125
+        confident_ai = 0.3187
+        polarity_verified = True
+        verdict = "human"
+
+    assessment = _assessment([], _Detection())
+    assert isinstance(assessment, Assessment)
+    assert assessment.verdict == "human"
+    assert assessment.reason == "", "a numeric band sentence is back under the headline"
+    assert assessment.band, "the operating point must still travel in the payload"

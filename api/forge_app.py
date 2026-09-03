@@ -421,7 +421,6 @@ footer{max-width:1180px;margin:0 auto;padding:6px 22px 36px;color:var(--muted);f
   <div class="tabs">
     <div class="tab on" data-tab="text">Text</div>
     <div class="tab" data-tab="image">Image</div>
-    <div class="tab" data-tab="results">Results</div>
   </div>
   <div class="status" id="status">
     <span class="dot na"></span><span id="statusText">CPU &middot; checking detectors&hellip;</span>
@@ -441,7 +440,6 @@ footer{max-width:1180px;margin:0 auto;padding:6px 22px 36px;color:var(--muted);f
     <button id="go">Analyse text</button>
     <div id="outText"></div>
   </section>
-  <section id="pane-results" class="hide"><div id="outResults"></div></section>
 </main>
 <footer>Built by Akila Lourdes Miriyala Francis</footer>
 <script>
@@ -450,8 +448,6 @@ document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x===t));
   $('#pane-image').classList.toggle('hide',t.dataset.tab!=='image');
   $('#pane-text').classList.toggle('hide',t.dataset.tab!=='text');
-  $('#pane-results').classList.toggle('hide',t.dataset.tab!=='results');
-  if(t.dataset.tab==='results') loadResults();
 });
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const cls=s=>({high:'hot',medium:'warn',present:'ok',low:'ok',not_found:'na',not_checked:'na'}[s]||'na');
@@ -656,112 +652,11 @@ function renderImage(d){
 
 
 // ---------------------------------------------------------------------------
-// RESULTS. Every figure is read from a committed run record. Nothing on this
-// page is computed at request time and nothing is typed in by hand, so it
-// cannot drift away from the repository the way a maintained table always does.
-// Sections whose record is absent do not render, rather than rendering zeros.
-// ---------------------------------------------------------------------------
-let _resultsLoaded=false;
-async function loadResults(){
-  if(_resultsLoaded) return; _resultsLoaded=true;
-  $('#outResults').innerHTML='<div class="card">Loading…</div>';
-  let d; try{ d=await (await fetch('/v1/results')).json(); }
-  catch(e){ $('#outResults').innerHTML='<div class="card err">'+esc(e)+'</div>'; return; }
-
-  const pc=v=>v==null?'—':(v*100).toFixed(2)+'%';
-  const n4=v=>v==null?'—':(+v).toFixed(4);
-  let h='';
-
-  h+=`<div class="assess big"><div class="verdictbox"><div>
-    <h2>Measured results</h2>
-    <p>Two arms of one experiment: identical data budget, differing only in which AI
-    documents they contain. Read from committed run records.</p></div></div></div>
-    <div class="grid">`;
-
-  const idd=d.in_distribution;
-  if(idd){
-    h+=`<div class="card wide"><h3>In distribution
-      <span class="sum">held-in generators</span></h3>
-      <table class="tbl"><thead><tr><th>Arm</th><th>Human FPR</th><th>AI FNR</th>
-      <th>AUROC</th><th>ECE</th><th>n</th></tr></thead><tbody>
-      ${idd.rows.map(r=>`<tr><td>${esc(r.label)}</td><td>${pc(r.fpr)}</td>
-        <td><b>${pc(r.fnr)}</b></td><td>${n4(r.auroc)}</td><td>${n4(r.ece)}</td>
-        <td>${r.n_human} + ${r.n_ai}</td></tr>`).join('')}
-      </tbody></table>
-      ${idd.significance?`<p class="caveat">${esc(typeof idd.significance==='string'
-        ?idd.significance:JSON.stringify(idd.significance))}</p>`:''}
-      ${idd.caveat?`<p class="caveat">${esc(typeof idd.caveat==='string'
-        ?idd.caveat:JSON.stringify(idd.caveat))}</p>`:''}
-      </div>`;
-  }
-
-  const ood=d.out_of_distribution;
-  if(ood){
-    h+=`<div class="card wide"><h3>Out of distribution
-      <span class="sum">generators neither arm saw</span></h3>
-      <table class="tbl"><thead><tr><th>Benchmark</th><th>Arm</th><th>AUROC</th>
-      <th>FNR at a matched 0.1% budget</th><th>ECE</th></tr></thead><tbody>
-      ${ood.cells.map(c=>`<tr><td>${esc(c.benchmark.toUpperCase())}</td>
-        <td>${esc(c.label)}</td><td>${n4(c.auroc)}</td>
-        <td><b>${pc(c.fnr_at_budget)}</b></td><td>${n4(c.ece)}</td></tr>`).join('')}
-      </tbody></table>
-      <p class="caveat">ECE is 0.004 in distribution and 0.18 to 0.44 here. Calibration does
-      not degrade under shift, it collapses: the model stays confident while becoming wrong.
-      Neither arm is deployable against unseen generators.</p></div>`;
-
-    if(ood.significance.length){
-      h+=`<div class="card wide"><h3>Does the gap survive a test?</h3>
-        <table class="tbl"><thead><tr><th>Benchmark</th><th>ΔAUROC (B−A)</th><th>95% CI</th>
-        <th>Sign reverses</th><th>Discordant at a matched budget</th>
-        <th>McNemar p</th></tr></thead><tbody>
-        ${ood.significance.map(s=>{
-          const dis=s.discordant||{};
-          const rev=s.reversal!=null?(s.reversal*100).toFixed(1)+'%':'—';
-          return `<tr><td>${esc(s.benchmark.toUpperCase())}</td>
-            <td>${s.delta_auroc>=0?'+':''}${n4(s.delta_auroc)}</td>
-            <td>${s.ci95?`[${n4(s.ci95[0])}, ${n4(s.ci95[1])}]`:'—'}</td>
-            <td>${rev}</td>
-            <td>${dis.random_miss_mirror_catch!=null
-              ?`${dis.random_miss_mirror_catch} vs ${dis.random_catch_mirror_miss}`:'—'}</td>
-            <td>${s.mcnemar_p!=null?(+s.mcnemar_p).toExponential(1):'—'}</td></tr>`;
-        }).join('')}
-        </tbody></table>
-        <p class="caveat">On RAID the two arms have the same AUROC to within noise, the sign
-        reversing in 72.7% of resamples, and yet at a matched false-positive budget the
-        mirror arm catches 122 documents the control misses against 9 the other way.
-        Mirroring moved the low-false-positive tail without moving the ranking, which the
-        headline metric cannot see. On MAGE there is no effect at all.</p></div>`;
-    }
-  }
-
-  const ip=d.image_probe;
-  if(ip){
-    h+=`<div class="card wide"><h3>Image detector
-      <span class="sum">baseline, measured on a labelled probe set</span></h3>
-      <table class="tbl"><thead><tr><th></th><th>n</th><th>median P(AI)</th>
-      <th>mean P(AI)</th></tr></thead><tbody>
-      <tr><td>Generated</td><td>${ip.n.ai}</td><td><b>${n4(ip.median.ai)}</b></td>
-        <td>${n4(ip.mean.ai)}</td></tr>
-      <tr><td>Photographs</td><td>${ip.n.human}</td><td><b>${n4(ip.median.human)}</b></td>
-        <td>${n4(ip.mean.human)}</td></tr>
-      </tbody></table>
-      <div class="row"><span class="k">Threshold, above every photograph</span>
-        <span class="v">${n4(ip.threshold)}</span></div>
-      <div class="row"><span class="k">Recall there</span>
-        <span class="v"><b>${pc(ip.recall)}</b></span></div>
-      <div class="row"><span class="k">Detector</span>
-        <span class="v">${esc(ip.model_id)}</span></div>
-      <p class="caveat">${ip.in_sample?'IN SAMPLE. The threshold is fitted on the same '
-        +ip.n.human+' photographs it is evaluated on, so the false-positive rate is zero by '
-        +'construction and this recall is optimistic. It is an operating point, not a '
-        +'result.':''} Two other published detectors were measured on the same set: one did
-        not separate the groups at all, and one separated only in the mean while placing over
-        half the generated images below 0.07.</p></div>`;
-  }
-
-  h+=`<div class="card wide"><p class="caveat">${esc(d.note)}</p></div></div>`;
-  $('#outResults').innerHTML=h;
-}
+// The Results tab was removed from the interface: the measured numbers belong in
+// docs/evaluation.md and docs/writeup.md, where they sit next to their method, rather
+// than in a third tab competing with the two live detectors. /v1/results and
+// api/results.py stay, and still read only from committed run records, so the figures
+// remain available as JSON without a page that has to be kept in step with the docs.
 
 $('#go').onclick=async()=>{
   const text=$('#text').value.trim();

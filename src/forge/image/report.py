@@ -436,10 +436,13 @@ def _assessment(findings: list[Finding], detection) -> Assessment:
             verdict=detection.verdict,
             confidence=detection.ai_probability,
             band=f"[{detection.threshold_ai:.3f}, {detection.confident_ai:.3f})",
-            reason=(
-                f"Not AI below {detection.threshold_ai:.3f}, AI at or above "
-                f"{detection.confident_ai:.3f}."
-            ),
+            # NO SENTENCE UNDER THE VERDICT. This used to read "Not AI below 0.319, AI at
+            # or above 0.319", which is not a useful sentence: when the human ceiling and
+            # the confident-AI floor round to the same figure the uncertain band is narrower
+            # than the rounding, so it reads as a contradiction sitting under the headline.
+            # The operating point is still in the payload as `band`, in the Details section
+            # and in /health, where a number belongs. The banner states the verdict.
+            reason="",
             # Explicitly empty. The dataclass default is the "no detector exists yet"
             # paragraph, and it was rendering next to a live verdict.
             detail="",
