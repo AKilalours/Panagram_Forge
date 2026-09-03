@@ -387,7 +387,7 @@ const techRows=list=>list.map(r=>`<div class="techrow">
   let s={}; try{ s=await (await fetch('/v1/text/arms')).json(); }catch(e){}
   const ready=Object.values(s).filter(v=>v==='ready').length;
   const dot=$('#status .dot'), txt=$('#statusText');
-  txt.textContent='CPU · text detector '+(ready?`ready (${ready}/2 arms)`:'not loaded')
+  txt.textContent='CPU · text detector '+(ready?'ready':'not loaded')
     +' · image detector not trained';
   dot.className='dot '+(ready?'ok':'na');
 })();
@@ -426,11 +426,16 @@ function banner(o){
   const pct = pending ? null : (o.probability*100);
   const cls = pending ? 'pending' : (o.verdict==='ai'?'hot':o.verdict==='human'?'ok':'warn');
   const pos = pending ? 50 : Math.min(100, Math.max(0, pct));
+  // "NO AI DETECTED", never "HUMAN". A detector cannot establish that a person made
+  // something; it can only report whether the input looks like the AI distribution it was
+  // trained on. "Human" is a claim about the world, "no AI detected" is a claim about the
+  // model, and only the second one is true.
+  const WORD = {ai:'AI DETECTED', human:'NO AI DETECTED', uncertain:'UNCERTAIN'};
   return `<div class="assess big ${cls}">
     <div class="verdictbox">
       <div class="mark">${pending?'?':(o.verdict==='ai'?'!':o.verdict==='human'?'✓':'~')}</div>
       <div>
-        <h2>${esc(pending?'No verdict':o.verdict.toUpperCase())}</h2>
+        <h2>${esc(pending?'No verdict':(WORD[o.verdict]||o.verdict.toUpperCase()))}</h2>
         <p>${esc(o.reason||'')}</p>
       </div>
     </div>
@@ -538,10 +543,10 @@ function renderImage(d){
           :ms.toLocaleString()+' ms'+(share>=5?' · '+share+'%':'')}</span></div>`;
     }).join('')}
     ${row('Total',total.toLocaleString()+' ms (CPU)')}
-    ${row('Report version',d.report_version)}
     <p class="caveat">Measured per stage, not estimated. The detector row is zero because
     no image model exists yet; the slot is here so its cost is visible the moment one does.
-    </p></div></div>`;
+    </p>
+    <p class="tech">Report schema ${esc(d.report_version)}</p></div></div>`;
   $('#outImage').innerHTML=h;
   const btn=$('#runStability');
   if(btn) btn.onclick=()=>{ window._forgeStability=true;
@@ -603,13 +608,14 @@ $('#go').onclick=async()=>{
     ${row('FPR budget',a.fpr_budget)}
     ${row('Distance from threshold',(a.confidence*100).toFixed(1)+'%')}
     ${row('Windows scored',a.n_windows)}
-    ${row('Model',a.model_version)}
     ${row('Its validation FNR',(a.val_fnr*100).toFixed(3)+'%')}
     ${row('Its validation ECE',a.val_ece)}
     ${spark(a.windows)}</div>`).join('');
 
   $('#outText').innerHTML=head+`<div class="grid">${cards}${why}
     <div class="card wide"><h3>What this score is not</h3>
-      <p>${esc(d.caveat)}</p><p>${esc(d.abstention)}</p></div></div>`;
+      <p>${esc(d.caveat)}</p><p>${esc(d.abstention)}</p>
+      <p class="tech" style="margin-top:9px">Provenance, for reproducibility rather than
+      display: ${d.arms.map(a=>esc(a.model_version)).join(' · ')}</p></div></div>`;
 };
 </script></body></html>"""
