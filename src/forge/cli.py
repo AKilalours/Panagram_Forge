@@ -228,10 +228,83 @@ def train(
 
 
 @app.command()
-def evaluate(config: str = typer.Option(..., "--config")) -> None:
-    """Run the evaluation lab across all five regimes plus external benchmarks."""
-    cfg.load(config)
-    _not_yet("3", "the evaluation lab")
+def evaluate(
+    config: str = typer.Option(..., "--config"),
+    arm: str = typer.Option(None, "--arm", help="which trained arm to attack; default: the config's"),
+    limit: int = typer.Option(500, "--limit", help="AI test documents to attack"),
+    out: str = typer.Option("reports/experiments", "--out"),
+    attacks: str = typer.Option(None, "--attacks", help="comma-separated subset"),
+) -> None:
+    """Run the adversarial laboratory against a trained arm: the delta-FNR table.
+
+    Attacks are applied to AI documents from the arm's own TEST split, because FNR is the
+    metric an evader moves and the test split is the only data the model has not seen.
+
+    Each attack is measured twice, raw and after the production normalisation pass, so the
+    table separates "this attack beats the model" from "this attack beats a deployment that
+    skipped normalisation". No-ops and attacks that fail the meaning-preservation check are
+    excluded from the scores and counted separately, because an attack that mangles the text
+    into nonsense trivially defeats a detector and proves nothing.
+
+    This was `_not_yet("3", "the evaluation lab")` while attacks.py and lab.py were both
+    written and tested. The held-out-generator evaluation is a separate entrypoint,
+    scripts/eval_ood.py; this command does not duplicate it.
+    """
+    import json
+
+    from forge.adversarial.lab import render_table, run_attacks
+    from forge.inference.scorer import ArmUnavailable, load_arm
+    from forge.training.data import load_examples
+
+    cfg_data = cfg.load(config)
+    arm_name = arm or ("mirror" if cfg_data["data"].get("arm") != "random" else "baseline")
+    try:
+        loaded = load_arm(arm_name)
+    except ArmUnavailable as error:
+        raise PhaseNotImplemented(
+            f"the adversarial lab attacks a trained detector: {error}"
+        ) from None
+
+    examples = load_examples(
+        ai_root=cfg_data["paths"]["ai"], splits=("test",),
+        expect_arm=cfg_data["data"].get("arm"),
+    )
+    ai = [e for e in examples if e.label == 1][:limit]
+    if not ai:
+        raise PhaseNotImplemented(
+            f"no AI documents in the test split of {cfg_data['paths']['ai']}. The lab "
+            "measures how far an evader can push FNR, and FNR needs AI documents."
+        )
+
+    typer.echo(
+        f"attacking {len(ai)} AI test documents with {loaded.policy.model_version} "
+        f"at threshold {loaded.policy.threshold:.6f}"
+    )
+    results = run_attacks(
+        [e.text for e in ai], [e.doc_id for e in ai],
+        score_fn=lambda texts: [loaded.score(t).mean for t in texts],
+        threshold=loaded.policy.threshold,
+        attacks=[a.strip() for a in attacks.split(",")] if attacks else None,
+    )
+    typer.echo("\n" + render_table(results))
+
+    path = Path(out) / f"adversarial_{loaded.experiment}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "experiment": loaded.experiment,
+        "model_version": loaded.policy.model_version,
+        "threshold": loaded.policy.threshold,
+        "fpr_budget": loaded.policy.fpr_budget,
+        "n_ai_documents": len(ai),
+        "split": "test",
+        "note": (
+            "delta-FNR against the clean baseline, measured raw and after production "
+            "normalisation. No-ops and attacks failing preserves_meaning are excluded from "
+            "the scores and counted separately."
+        ),
+        "results": [r.as_dict() for r in results],
+    }, indent=2) + "\n")
+    typer.echo(f"\nwritten {path}")
 
 
 @app.command()
