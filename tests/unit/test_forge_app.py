@@ -1,10 +1,16 @@
 """The two-detector interface: every panel present, no panel invented.
 
 The layout this serves has nine panels, and the temptation with a design that complete is
-to fill the empty ones. Two of them need trained weights: the overall assessment and the
-attribution heatmap. Filling those from metadata would fire hardest on screenshots and
-re-saved photographs, which have no EXIF and library quantisation tables, so the tests here
-assert those two stay empty and that everything else is genuinely computed.
+to fill the empty ones. Filling a verdict from metadata would fire hardest on screenshots
+and re-saved photographs, which have no EXIF and library quantisation tables, so the tests
+here assert that nothing is invented and that everything shown is genuinely computed.
+
+READ THIS BEFORE ADDING A TEST HERE. This whole file was dead for most of the project:
+`fastapi` was declared only in the `serve` extra, the dev venv did not install it, and
+pytest skipped the module on an import error. Several tests in it then asserted the
+pre-detector world ("no verdict, ever") and would have PASSED on any machine without model
+weights while failing on a working build. So: assert the contract in both directions, and
+branch on what the loaders report rather than pinning a state that happens to hold in CI.
 
 `test_a_declared_ai_image_is_detected_without_any_model` is the interesting one. Metadata
 declarations are the only model-free signal that can positively indicate generation, and
@@ -57,17 +63,36 @@ def _photo(fmt: str = "JPEG", exif: bool = False, text_chunk: dict | None = None
     return buffer.getvalue()
 
 
-def _post(data: bytes, name: str = "a.jpg"):
-    return client.post("/v1/image/analyze", files={"file": (name, data, "image/jpeg")})
+def _post(data: bytes, name: str = "a.jpg", stability: bool = False):
+    return client.post(
+        "/v1/image/analyze",
+        params={"stability": str(stability).lower()},
+        files={"file": (name, data, "image/jpeg")},
+    )
 
 
 # ------------------------------------------------------------------------------- service
 
 
-def test_health_declares_both_detectors_absent() -> None:
+def test_health_reports_the_detectors_it_asked_rather_than_a_literal() -> None:
+    """THE REGRESSION. /health returned hardcoded False for both detectors.
+
+    It kept saying "detectors pending training" after both were built, and it could not
+    have reported a real outage either, because no code path ever set those fields. The
+    values must now come from the loaders, so this test asserts the SHAPE and the
+    agreement with the loaders, not a fixed answer: whether a model is present depends on
+    what is on disk, and a test that pins it to False is what let the lie survive.
+    """
+    from forge.image.detector import detector_state
+    from forge.inference.scorer import available as text_arms
+
     body = client.get("/health").json()
-    assert body["image_detector_loaded"] is False
-    assert body["text_detector_loaded"] is False
+    assert body["image_detector_loaded"] is bool(detector_state().get("available"))
+    expected_text = bool([n for n, st in text_arms().items() if st == "ready"])
+    assert body["text_detector_loaded"] is expected_text
+    assert "pending training" not in body["mode"]
+    for name, state in body["text_arms"].items():
+        assert state, f"arm {name} reports neither ready nor a reason"
 
 
 def test_the_page_serves_both_tabs() -> None:
@@ -78,38 +103,91 @@ def test_the_page_serves_both_tabs() -> None:
 # --------------------------------------------------------------------------- no invention
 
 
-def test_no_image_verdict_without_a_detector() -> None:
+def test_the_image_verdict_matches_whether_a_detector_is_actually_loaded() -> None:
+    """This asserted "no verdict, ever" and passed for the wrong reason.
+
+    It passed because the machine running it had no detector weights, not because the code
+    refuses to invent a verdict. The day the weights are cached locally it would have
+    failed on a working build. The real contract has two halves and this checks both: with
+    no verified detector the verdict is absent and a reason is given; with one, the verdict
+    is one of the three the policy defines and carries a probability.
+    """
+    from forge.image.detector import detector_state
+
+    state = detector_state()
     body = _post(_photo()).json()
-    assert body["assessment"]["available"] is False
-    assert body["assessment"]["verdict"] is None
-    assert body["assessment"]["confidence"] is None
+    assessment = body["assessment"]
+    if not state.get("available") or not state.get("polarity_verified"):
+        assert assessment["available"] is False
+        assert assessment["verdict"] is None
+        assert assessment["confidence"] is None
+        assert assessment["reason"], "a missing verdict must say why"
+    else:
+        assert assessment["available"] is True
+        assert assessment["verdict"] in {"ai", "human", "uncertain"}
+        assert 0.0 <= assessment["confidence"] <= 1.0
 
 
 def test_no_attribution_heatmap_without_a_local_head() -> None:
     body = _post(_photo()).json()
     assert body["attribution"]["available"] is False
     assert body["attribution"]["heatmap"] is None
-    assert "untrained" in body["attribution"]["reason"]
+    reason = body["attribution"]["reason"].lower()
+    # The word, not the meaning, is what this used to assert, so a rename broke it while
+    # the behaviour was unchanged. Assert the two things that actually matter: the
+    # segmentation is absent, and the reason does not deny the occlusion map that ships
+    # alongside it under `attribution_map`.
+    assert "localisation head" in reason
+    assert "occlusion attribution" in reason
 
 
-def test_the_visual_stream_is_marked_unavailable_rather_than_zero() -> None:
-    """A 0% bar reads as 'the model says no'. Unavailable reads as 'there is no model'."""
-    streams = {s["key"]: s for s in _post(_photo()).json()["evidence"]["streams"]}
-    assert streams["visual_model"]["available"] is False
+def test_the_visual_stream_is_never_a_zero_standing_in_for_a_missing_model() -> None:
+    """A 0% bar reads as "the model says no". Unavailable reads as "there is no model".
+
+    Same trap as the verdict test: pinning this to False passed only on a machine with no
+    weights. What must hold either way is that `available` tracks the loader, and that an
+    unavailable stream is not dressed up as a confident zero.
+    """
+    from forge.image.detector import detector_state
+
+    loaded = bool(detector_state().get("available"))
+    stream = {s["key"]: s for s in _post(_photo()).json()["evidence"]["streams"]}["visual_model"]
+    assert stream["available"] is loaded
+    if not loaded:
+        assert stream.get("strength") in (None, 0)
+        assert stream.get("direction") in (None, "neutral")
 
 
-def test_the_text_tab_surfaces_the_api_reason_rather_than_a_score() -> None:
+def test_the_text_endpoint_scores_with_both_arms_or_says_why_each_one_cannot() -> None:
+    """This asserted a 503 and the word "fabricating", from before the arms were trained.
+
+    It never ran, so it never failed when the endpoint started returning real scores. The
+    contract now is: every arm appears either in `arms` with a score, or in `unavailable`
+    with a reason. Neither list may silently swallow one.
+    """
+    from forge.inference.scorer import ARMS
+
     body = client.post("/v1/text/analyze", json={"text": "a sentence to analyse"}).json()
-    assert body["available"] is False
-    assert body["status"] == 503
-    assert "fabricating" in body["reason"]
+    accounted = {a["arm"] for a in body.get("arms", [])} | set(body.get("unavailable", {}))
+    assert accounted == set(ARMS), f"arms unaccounted for: {set(ARMS) - accounted}"
+    for arm in body.get("arms", []):
+        assert 0.0 <= arm["probability"] <= 1.0
+        assert arm["verdict"]
+    for name, reason in (body.get("unavailable") or {}).items():
+        assert reason.strip(), f"arm {name} is unavailable with no stated reason"
 
 
 # ------------------------------------------------------------------- what IS computed
 
 
 def test_every_panel_is_populated() -> None:
-    body = _post(_photo(exif=True)).json()
+    """Stability is requested explicitly, because the pass is opt-in on the endpoint.
+
+    This used to post without the flag and expect the panel filled, from when the pass ran
+    on every upload. Posting without it and demanding content asserts the opposite of the
+    documented behaviour, which is that absence is reported as absence.
+    """
+    body = _post(_photo(exif=True), stability=True).json()
     for panel in ("authenticity", "manipulation", "provenance", "stability"):
         assert body[panel], f"{panel} is empty"
     assert len(body["evidence"]["streams"]) == 5
@@ -163,7 +241,7 @@ def test_an_undeclared_image_is_not_called_human() -> None:
 
 def test_stability_shows_which_transforms_destroy_which_signals() -> None:
     """Real robustness data, computed without a model: EXIF does not survive a re-save."""
-    body = _post(_photo(exif=True)).json()
+    body = _post(_photo(exif=True), stability=True).json()
     assert body["stability_available"] is True
     lost = [r for r in body["stability"] if r["value"] and "lost EXIF" in r["value"]]
     assert lost, "a re-encode should destroy the EXIF block"

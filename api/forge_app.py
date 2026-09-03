@@ -81,11 +81,33 @@ app = FastAPI(title="FORGE", version="0.2.0")
 
 @app.get("/health")
 def health() -> dict:
+    """Report the detectors this process can actually serve, by asking them.
+
+    These three fields were hardcoded False with the mode string "detectors pending
+    training", and stayed that way after both detectors were built and wired. A health
+    endpoint that answers from a literal is not a health endpoint: it cannot report the
+    outage it exists to report, and here it reported an outage that was not happening.
+
+    `scorer.available()` and `detector_state()` already existed for exactly this and are
+    documented never to raise. Both load lazily and are cached, so the first call pays the
+    load and later calls are cheap.
+    """
+    from forge.image.detector import detector_state
+    from forge.inference.scorer import available as text_arms
+
+    arms = text_arms()
+    image = detector_state()
+    ready = sorted(name for name, state in arms.items() if state == "ready")
     return {
         "status": "ok",
-        "image_detector_loaded": False,
-        "text_detector_loaded": False,
-        "mode": "forensics live, detectors pending training",
+        "image_detector_loaded": bool(image.get("available")),
+        "image_detector": image,
+        "text_detector_loaded": bool(ready),
+        "text_arms": arms,
+        "mode": (
+            f"text arms ready: {', '.join(ready) or 'none'}; "
+            f"image detector: {'ready' if image.get('available') else 'unavailable'}"
+        ),
     }
 
 
