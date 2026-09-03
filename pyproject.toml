@@ -67,6 +67,14 @@ serve = [
   # The image path decodes every upload with Pillow. It is also in the `image` extra; the
   # server cannot run without it, so it is a hard serve dependency too.
   "pillow>=10.0",
+  # SERVING NEEDS THE MODEL STACK. These were declared only under `train`, on the reasoning
+  # that torch is a training dependency. It is not: forge.inference.scorer loads the text
+  # arms with it, forge.image.detector loads the visual detector with it, and
+  # forge.image.attribution runs the occlusion pass with it. Installing only `.[serve]`
+  # therefore produced a server whose every detector reported "not loaded", with the app
+  # itself booting fine, which is the hardest version of this failure to diagnose.
+  "torch>=2.3",
+  "transformers>=4.40",
   "onnxruntime>=1.17",
   "prometheus-client>=0.20",
   "boto3>=1.34",
