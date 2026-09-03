@@ -1,5 +1,20 @@
-# Minimal-scale hard_negative arm. Budget held EQUAL across arms: any improvement must come
-# from WHICH data, not HOW MUCH. See docs/evaluation.md.
+# Minimal-scale hard-negative arm (arm C). Budget held EQUAL across arms: any improvement
+# must come from WHICH data, not HOW MUCH. See docs/evaluation.md.
+#
+# THIS IS THE ARM THAT TESTS THE PROJECT'S THESIS. Arm B is matched mirroring, which does
+# not look at what the model gets wrong. Arm C mines arm B's own high-confidence false
+# positives, clusters them into failure modes, and generates targeted mirrors of the human
+# documents in those clusters. "Failure-driven" is this arm and only this arm.
+#
+# EQUAL BUDGET IS COMPOSITIONAL, NOT ADDITIVE. This is the trap that makes arm C easy to get
+# wrong. Mining pulls human documents out of the reserve pool, which sits OUTSIDE
+# train/val/test, and those documents enter TRAIN. Adding them on top of the existing pool
+# would give arm C more human text than arms A and B, and a false-positive-rate comparison
+# between arms trained on different amounts of human text says nothing. So the caps below
+# are the SAME numbers as the other two arms: 20,000 human and 20,000 AI. Mined humans and
+# targeted mirrors REPLACE part of that budget rather than extend it. The treatment is the
+# composition of a fixed budget, which is the only version of this experiment that answers
+# its own question.
 spec_version: data_spec_v1
 experiment: { id: forge_min_hard_negative, stage: hard_negative }
 model_config: configs/models/forge_base.yaml
@@ -7,13 +22,36 @@ fpr_budget: 0.001
 
 paths:
   human: data/silver
-  ai: data/silver/mirrors          # THIS ARM'S AI SOURCE. Each arm must differ.
+  # THIS ARM'S AI SOURCE. Each arm must differ. Targeted mirrors of the mined failure
+  # clusters are written here by `forge mine` plus a targeted generation pass; this
+  # directory does not exist until that has run, and training will refuse rather than
+  # silently fall back to another arm's data.
+  #
+  # It previously read data/silver/mirrors, identical to the mirror arm, directly under the
+  # comment saying each arm must differ. Arm C would have retrained arm B on arm B's data
+  # and reported the difference between them as a hard-negative effect.
+  ai: data/silver/targeted
   mixed: data/silver/mixed
   out: outputs
 
+mining:
+  # Which trained arm's failures are mined. Arm B, because it is the better of the two and
+  # the question is what remains wrong after matched mirroring, not what remains wrong after
+  # the weaker control.
+  from_arm: mirror
+  reserve_pool: data/reserve
+  min_confidence: 0.90
+  clustering: { min_cluster_size: 25 }
+  sampling: proportional_to_cluster_size
+
 data:
   dataset_version: v0.1-min
-  arm: hard_negative              # verified against prompt_version at load
+  # IDENTICAL to baseline_minimal.yaml and mirror_minimal.yaml. See the note above: these
+  # are not arm C's own budget, they are the shared budget, and arm C spends it differently.
+  ai_cap: 20000
+  human_cap: 20000
+  ai_reference: human
+  arm: hard_negative       # verified against prompt_version at load
 
 training:
   batch_size: 32
@@ -21,7 +59,10 @@ training:
   learning_rate: 2.0e-5
   weight_decay: 0.01
   warmup_ratio: 0.06
-  epochs: 3
+  # TWO, matching the other arms. It read 3, which is 50% more training than the arms it is
+  # compared against, under a header claiming equal budget. Any win would have been
+  # uninterpretable.
+  epochs: 2
   seed: 42
   precision: bf16
   gradient_checkpointing: true

@@ -1,4 +1,4 @@
-"""The two text arms must differ in exactly one place, and the budget must not be one of them.
+"""The text arms must differ in exactly one place, and the budget must not be one of them.
 
 WHY THIS FILE EXISTS. The arms are two YAML files that are meant to be identical except for
 their AI source. Nothing enforces that. They have already drifted once: all three arm configs
@@ -21,7 +21,11 @@ import pytest
 
 from forge.common.config import REPO_ROOT, load
 
-ARMS = ("configs/training/baseline_minimal.yaml", "configs/training/mirror_minimal.yaml")
+ARMS = (
+    "configs/training/baseline_minimal.yaml",
+    "configs/training/mirror_minimal.yaml",
+    "configs/training/hard_negative_minimal.yaml",
+)
 
 
 @pytest.fixture(scope="module")
@@ -90,7 +94,7 @@ def test_each_arm_declares_which_arm_it_is(configs: dict[str, dict]) -> None:
     prompt_version stored on each document; a config saying "baseline" would fail at load.
     """
     arms = {cfg["data"]["arm"] for cfg in configs.values()}
-    assert arms == {"random", "mirror"}, arms
+    assert arms == {"random", "mirror", "hard_negative"}, arms
 
 
 def test_both_arms_length_match_against_the_same_reference(configs: dict[str, dict]) -> None:
@@ -111,25 +115,32 @@ def test_the_arms_are_otherwise_identical(configs: dict[str, dict]) -> None:
     Stated as a whitelist rather than a spot check: a future edit to one arm's learning rate
     or epoch count fails here rather than quietly becoming the explanation for a result.
     """
-    allowed_to_differ = {"experiment", "paths", "data"}
-    baseline, mirror = (configs[path] for path in ARMS)
-    for key in set(baseline) | set(mirror):
-        if key in allowed_to_differ:
-            continue
-        assert baseline.get(key) == mirror.get(key), (
-            f"the arms differ in {key!r}, which is not one of the treatment variables: "
-            f"{baseline.get(key)} vs {mirror.get(key)}"
-        )
+    allowed_to_differ = {"experiment", "paths", "data", "mining"}
+    reference_path, *others = ARMS
+    reference = configs[reference_path]
+    for path in others:
+        other = configs[path]
+        for key in set(reference) | set(other):
+            if key in allowed_to_differ:
+                continue
+            assert reference.get(key) == other.get(key), (
+                f"{path} differs from {reference_path} in {key!r}, which is not one of the "
+                f"treatment variables: {other.get(key)} vs {reference.get(key)}"
+            )
 
 
 def test_the_data_blocks_differ_only_where_they_must(configs: dict[str, dict]) -> None:
-    baseline, mirror = (configs[path]["data"] for path in ARMS)
-    for key in set(baseline) | set(mirror):
-        if key == "arm":
-            continue
-        assert baseline.get(key) == mirror.get(key), (
-            f"data.{key} differs between arms: {baseline.get(key)} vs {mirror.get(key)}"
-        )
+    reference_path, *others = ARMS
+    reference = configs[reference_path]["data"]
+    for path in others:
+        other = configs[path]["data"]
+        for key in set(reference) | set(other):
+            if key == "arm":
+                continue
+            assert reference.get(key) == other.get(key), (
+                f"data.{key} differs between {reference_path} and {path}: "
+                f"{reference.get(key)} vs {other.get(key)}"
+            )
 
 
 def test_every_arm_config_named_here_exists() -> None:
@@ -153,3 +164,44 @@ def test_both_arms_run_the_same_number_of_epochs(configs: dict[str, dict]) -> No
     epochs is the field most likely to be edited by hand at 2am."""
     epochs = {cfg["training"]["epochs"] for cfg in configs.values()}
     assert len(epochs) == 1, f"the arms train for different numbers of epochs: {epochs}"
+
+
+def test_arm_c_does_not_read_another_arms_ai_data(configs: dict[str, dict]) -> None:
+    """The regression. Arm C pointed at data/silver/mirrors, which is arm B's directory.
+
+    It sat directly under the comment saying each arm must differ. Left there, arm C would
+    have retrained arm B on arm B's data and the difference between the two runs would have
+    been reported as a hard-negative effect. Nothing would have errored.
+    """
+    c = configs["configs/training/hard_negative_minimal.yaml"]["paths"]["ai"]
+    others = {
+        configs[p]["paths"]["ai"]
+        for p in ARMS
+        if p != "configs/training/hard_negative_minimal.yaml"
+    }
+    assert c not in others, f"arm C reads {c}, which belongs to another arm"
+
+
+def test_arm_c_carries_the_shared_budget_not_its_own(configs: dict[str, dict]) -> None:
+    """Mined humans and targeted mirrors REPLACE part of a fixed budget, never extend it.
+
+    Mining draws from the reserve pool, which sits outside train/val/test, so mined
+    documents are additional unless the caps hold. An arm C trained on more human text than
+    arms A and B would show a better false-positive rate for a reason that has nothing to do
+    with failure-driven selection.
+    """
+    c = configs["configs/training/hard_negative_minimal.yaml"]["data"]
+    for path in ARMS:
+        other = configs[path]["data"]
+        assert c["ai_cap"] == other["ai_cap"], f"ai_cap differs from {path}"
+        assert c["human_cap"] == other["human_cap"], f"human_cap differs from {path}"
+
+
+def test_arm_c_mines_a_named_arm_that_exists(configs: dict[str, dict]) -> None:
+    """`from_arm` decides whose failures define the treatment. It cannot be implicit."""
+    mining = configs["configs/training/hard_negative_minimal.yaml"].get("mining", {})
+    assert mining.get("from_arm"), "arm C does not say whose failures it mines"
+    declared = {configs[p]["data"]["arm"] for p in ARMS}
+    assert mining["from_arm"] in declared, (
+        f"arm C mines {mining['from_arm']!r}, which is not one of {sorted(declared)}"
+    )
