@@ -94,22 +94,78 @@ class TextRequest(BaseModel):
 
 @app.post("/v1/text/analyze")
 def analyze_text(req: TextRequest) -> JSONResponse:
-    """Delegate to the detection API rather than reimplementing its decision policy.
+    """Score with BOTH arms and show them side by side.
 
-    That API owns thresholds, the FPR budget and abstention. Duplicating any of it here
-    would mean two places to keep honest, and the second one always drifts.
+    The decision policy is not reimplemented here. Thresholds come from each arm's committed
+    summary.json and the verdict comes from forge.inference.decision.decide, so there is one
+    place where a score becomes a claim.
+
+    Both arms rather than one, because the comparison IS the project. A single verdict would
+    hide the thing the experiment measured, and the two arms genuinely disagree on documents
+    near the threshold: on RAID, 122 documents that arm A misses arm B catches.
+
+    An arm that cannot load reports why. It never falls back to a score.
     """
-    from api.main import detect
+    from forge.inference.decision import decide
+    from forge.inference.scorer import ARMS, ArmUnavailable, load_arm
 
     words = len(req.text.split())
-    try:
-        result = detect(req)  # type: ignore[arg-type]
-        return JSONResponse({"available": True, "words": words, "result": result.model_dump()})
-    except HTTPException as error:
-        return JSONResponse(
-            {"available": False, "words": words, "status": error.status_code,
-             "reason": error.detail}
-        )
+    arms, unavailable = [], {}
+    for name in ARMS:
+        try:
+            arm = load_arm(name)
+            scored = arm.score(req.text)
+        except ArmUnavailable as error:
+            unavailable[name] = str(error)
+            continue
+        except Exception as error:                      # noqa: BLE001 - surfaced, not hidden
+            unavailable[name] = f"{type(error).__name__}: {error}"
+            continue
+
+        decision = decide(scored.mean, arm.policy)
+        arms.append({
+            "arm": scored.arm,
+            "label": scored.label,
+            "verdict": decision.verdict.value,
+            "ai_probability": scored.mean,
+            "max_window_probability": scored.maximum,
+            "confidence": decision.confidence,
+            "threshold": arm.policy.threshold,
+            "fpr_budget": arm.policy.fpr_budget,
+            "model_version": arm.policy.model_version,
+            "abstained": decision.abstained,
+            "n_windows": scored.n_windows,
+            "windows": scored.window_probabilities[:64],
+            "val_fnr": arm.summary["val"].get("fnr"),
+            "val_ece": arm.summary["val"].get("ece"),
+        })
+
+    return JSONResponse({
+        "available": bool(arms),
+        "words": words,
+        "arms": arms,
+        "unavailable": unavailable,
+        "aggregation": "mean over windows; max shown alongside because it inflates FPR",
+        "caveat": (
+            "Trained on four generator families at 1.7B to 3.8B parameters. Against unseen "
+            "generators these checkpoints miss 63% to 96% of AI text at this threshold and "
+            "their ECE rises from 0.004 to 0.18-0.44. A confident score here is not evidence "
+            "of a confident model. See docs/evaluation.md."
+        ),
+        "abstention": (
+            "Off. The uncertain band is derived from validation scores "
+            "(decision.band_from_validation), which are not committed, and a band chosen by "
+            "eye would silently change the false-positive rate."
+        ),
+    })
+
+
+@app.get("/v1/text/arms")
+def text_arms() -> JSONResponse:
+    """Which arms can serve right now, and for those that cannot, the reason."""
+    from forge.inference.scorer import available
+
+    return JSONResponse(available())
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -126,6 +182,9 @@ _PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
  --ink:#e9ebef;--muted:#98a1ae;--line:#242a33;--accent:#7ba6dd;--ok:#5fbf8f;--warn:#dba847;
  --hot:#e37d66;--chip:#1d232b;--bar:#232a33}}
 *{box-sizing:border-box}
+.spark{display:flex;align-items:flex-end;gap:2px;height:44px;margin-top:10px;
+ padding:4px;background:var(--chip);border-radius:6px}
+.spark i{flex:1;min-width:2px;background:var(--accent);border-radius:1px;opacity:.85}
 body{margin:0;background:var(--bg);color:var(--ink);
  font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
 header{display:flex;align-items:center;gap:16px;padding:12px 22px;background:var(--panel);
@@ -291,19 +350,44 @@ $('#go').onclick=async()=>{
     headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}); }
   catch(e){ $('#outText').innerHTML='<div class="card err">'+esc(e)+'</div>'; return; }
   const d=await r.json();
+  const why=Object.entries(d.unavailable||{})
+    .map(([a,m])=>`<div class="card err"><h3>${esc(a)} unavailable</h3><p>${esc(m)}</p></div>`)
+    .join('');
   if(!d.available){
     $('#outText').innerHTML=`<div class="assess"><h2>No verdict</h2>
-      <p>${esc(d.reason)}</p></div><div class="grid"><div class="card"><h3>Input</h3>
-      ${row('Words',d.words)}${row('Detector','not loaded','not_checked')}</div></div>`;
+      <p>Neither arm could be loaded, so no score is produced. A number here would be
+      fabricated.</p></div><div class="grid">${why}
+      <div class="card"><h3>Input</h3>${row('Words',d.words)}</div></div>`;
     return;
   }
-  const res=d.result;
-  $('#outText').innerHTML=`<div class="assess"><h2>${esc(res.prediction)}</h2>
-    <p>Scored against a ${res.fpr_budget} false-positive budget.</p></div>
-    <div class="grid"><div class="card"><h3>Result</h3>
-    ${row('AI probability',(res.ai_probability*100).toFixed(1)+'%')}
-    ${row('Confidence',(res.confidence*100).toFixed(1)+'%')}
-    ${row('Threshold',res.threshold)}${row('Model',res.model_version)}
-    ${row('Abstained',res.uncertainty.abstained)}${row('Words',d.words)}</div></div>`;
+
+  // The two arms disagree near the threshold, and that disagreement is the experiment.
+  const agree = d.arms.length>1 && d.arms[0].verdict===d.arms[1].verdict;
+  const head = d.arms.length>1
+    ? (agree ? `Both arms say ${esc(d.arms[0].verdict)}`
+             : `The arms disagree: ${d.arms.map(a=>esc(a.arm)+' '+esc(a.verdict)).join(', ')}`)
+    : `${esc(d.arms[0].label)}: ${esc(d.arms[0].verdict)}`;
+
+  const spark = w => w.length<2 ? '' :
+    `<div class="spark">${w.map(p=>`<i style="height:${Math.max(2,Math.round(p*100))}%"></i>`).join('')}</div>`;
+
+  const cards = d.arms.map(a=>`<div class="card"><h3>${esc(a.label)}</h3>
+    ${row('Verdict',a.verdict,a.verdict==='ai'?'hot':(a.verdict==='human'?'ok':'warn'))}
+    ${row('AI probability (mean over windows)',(a.ai_probability*100).toFixed(2)+'%')}
+    ${row('Highest single window',(a.max_window_probability*100).toFixed(2)+'%')}
+    ${row('Deployed threshold',a.threshold.toFixed(6))}
+    ${row('FPR budget',a.fpr_budget)}
+    ${row('Distance from threshold',(a.confidence*100).toFixed(1)+'%')}
+    ${row('Windows scored',a.n_windows)}
+    ${row('Model',a.model_version)}
+    ${row('Its validation FNR',(a.val_fnr*100).toFixed(3)+'%')}
+    ${row('Its validation ECE',a.val_ece)}
+    ${spark(a.windows)}</div>`).join('');
+
+  $('#outText').innerHTML=`<div class="assess"><h2>${head}</h2>
+    <p>${esc(d.aggregation)}. ${d.arms.length} of 2 arms loaded, ${d.words} words.</p></div>
+    <div class="grid">${cards}${why}
+    <div class="card wide"><h3>What this score is not</h3>
+      <p>${esc(d.caveat)}</p><p>${esc(d.abstention)}</p></div></div>`;
 };
 </script></body></html>"""
