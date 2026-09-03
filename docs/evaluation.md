@@ -5,10 +5,61 @@ and `code_commit` are recorded in `reports/experiments/`.
 
 | System | Human FPR | AI FNR | OOD AUROC | Adversarial FNR | ECE |
 |---|---|---|---|---|---|
-| A: random synthetic | | | | | |
-| B: + synthetic mirrors | | | | | |
+| A: random synthetic | 0.000502 | 0.00719 | not run | not run | 0.00447 |
+| B: + synthetic mirrors | 0.000502 | 0.00430 | not run | not run | 0.00371 |
 | C: + hard negatives | | | | | |
 | D: + adversarial | | | | | |
+
+Arms A and B, `dataset_version` v0.1-min, `code_commit` 4ec8204, 2026-09-03. Full records
+in `reports/experiments/`. Both arms: 20,000 human and 20,000 AI documents, two epochs,
+DeBERTa-v3-base, one RTX 4090, about 21 minutes each.
+
+## The result, and why it is not yet a finding
+
+At an identical false-positive budget the mirror arm missed fewer AI documents:
+
+| | random | mirror |
+|---|---|---|
+| False positives | 1 of 1,993 humans | 1 of 1,993 humans |
+| Missed AI documents | **15 of 2,086** | **9 of 2,091** |
+| FNR | 0.719% | 0.430% |
+| Relative reduction | | 40.1% |
+
+**That difference is not statistically significant.** A two-proportion z-test on the FNR
+gives z = 1.234, two-sided p = 0.217. Detecting a gap this size at 80% power would need
+about **10,761 AI documents per arm in validation**; there are 2,090. The 40% headline rests
+on the difference between nine misses and fifteen, and six documents is well inside what
+chance produces.
+
+Reported this way deliberately. The number that sells is 40%; the number that is true is
+p = 0.217, and the gap between those two sentences is the reason this section exists.
+
+**The validation split is also saturated.** AUROC is 0.99997 on both arms. The detector is
+scoring text from the same four generator families it was trained on, and that task is
+close to solved at this scale. An in-distribution comparison between two nearly perfect
+models cannot separate them.
+
+**So the honest reading is:** the pipeline runs end to end, both arms hit the 0.1% FPR
+budget, calibration is good (ECE 0.0045 and 0.0037), and the mirror arm points the right
+way without proving anything. The discriminating test is held-out generators, RAID, MAGE
+and HC3, which has not run.
+
+## What made these numbers trustworthy enough to report at all
+
+Before this run, a detector could score **AUROC 0.841 on the control arm without reading a
+word of the text**, purely from document length. Generation used one `max_new_tokens` for
+every document and the models treated the cap as a target, so AI text ran systematically
+long. Two corpora were discarded rather than trained on.
+
+| stage | length-only AUROC (random / mirror) |
+|---|---|
+| Original corpora | 0.841 / 0.774 |
+| Per-document token budget | 0.720 / 0.699 |
+| AI length matched to the human corpus | **0.546 / 0.546** |
+
+The final assembled training sets have a human median of 256 words against an AI median of
+257. A gate now blocks training whenever length separates the classes by more than 0.15
+from chance, measured on the assembled data rather than the raw pools.
 
 Data budget is held equal across A, B and C. Without that, any improvement is just
 "more data" and says nothing about failure-driven selection.
