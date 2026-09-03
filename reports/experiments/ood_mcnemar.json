@@ -3,8 +3,8 @@
     "budget": 0.001,
     "allowed_human_fp": 2,
     "threshold": {
-      "random": 0.999646664,
-      "mirror": 0.999767601
+      "random": 0.9996466636657715,
+      "mirror": 0.9997676014900208
     },
     "human_fp_spent": {
       "random": 2,
@@ -25,8 +25,8 @@
     },
     "mcnemar": {
       "chi2": 39.5,
-      "p": 3.281e-10,
-      "exact_p": 1.312e-10
+      "p": 3.28059e-10,
+      "exact_p": 1.31196e-10
     },
     "test": "McNemar on the same AI documents, at a threshold re-fit per arm to spend the SAME human false-positive budget. Replaces the two-proportion z-test, which compared FNRs at two different operating points and assumed the two arms were independent samples when they score identical documents."
   },
@@ -34,8 +34,8 @@
     "budget": 0.001,
     "allowed_human_fp": 2,
     "threshold": {
-      "random": 0.99957341,
-      "mirror": 0.99986124
+      "random": 0.9995734095573425,
+      "mirror": 0.9998612403869629
     },
     "human_fp_spent": {
       "random": 2,
@@ -56,8 +56,8 @@
     },
     "mcnemar": {
       "chi2": 1.362,
-      "p": 0.2432,
-      "exact_p": 0.243
+      "p": 0.243243,
+      "exact_p": 0.24296
     },
     "test": "McNemar on the same AI documents, at a threshold re-fit per arm to spend the SAME human false-positive budget. Replaces the two-proportion z-test, which compared FNRs at two different operating points and assumed the two arms were independent samples when they score identical documents."
   },
@@ -65,8 +65,8 @@
     "budget": 0.001,
     "allowed_human_fp": 2,
     "threshold": {
-      "random": 0.98517704,
-      "mirror": 0.8956348
+      "random": 0.9851770401000977,
+      "mirror": 0.895634800195694
     },
     "human_fp_spent": {
       "random": 2,
@@ -87,8 +87,8 @@
     },
     "mcnemar": {
       "chi2": 95.756,
-      "p": 1.3e-22,
-      "exact_p": 1.873e-26
+      "p": 1.2997e-22,
+      "exact_p": 1.87262e-26
     },
     "test": "McNemar on the same AI documents, at a threshold re-fit per arm to spend the SAME human false-positive budget. Replaces the two-proportion z-test, which compared FNRs at two different operating points and assumed the two arms were independent samples when they score identical documents."
   }

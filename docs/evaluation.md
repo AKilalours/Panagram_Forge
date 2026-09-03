@@ -161,6 +161,22 @@ the in-distribution work and stays a stated expectation, not a measured one here
 the same operating point. Nothing in the matched-budget table describes what a user would
 get.
 
+### Reproducing this without a GPU
+
+The per-document score arrays are committed, 216 KB for all six cells. From a clean
+checkout, on a laptop:
+
+```
+python scripts/ood_mcnemar.py        # the matched-budget paired test
+python scripts/ood_significance.py --benchmark hc3    # the AUROC bootstrap
+python scripts/ood_table.py          # the table, which reports and does not adjudicate
+```
+
+`ood_mcnemar.py` asserts that both arms scored the same documents in the same order before
+computing anything paired, and exits rather than guessing if the arrays are absent. The
+tables above were regenerated this way on a machine that never saw the GPU, and every count
+matched the original run.
+
 ## What made these numbers trustworthy enough to report at all
 
 Before this run, a detector could score **AUROC 0.841 on the control arm without reading a

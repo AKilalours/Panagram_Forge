@@ -1,8 +1,12 @@
-# Run records are the evidence docs/evaluation.md points at, so the small JSON
-# summaries are tracked. Everything heavy that a run also drops here -- per-document
-# score arrays, checkpoints, logs -- is not.
+# Run records are the evidence docs/evaluation.md points at, so the JSON summaries are
+# tracked. The per-document score arrays are tracked too: they are 36 KB each, and they
+# are what lets anyone re-run the paired bootstrap and the McNemar test on a laptop
+# without a GPU. Checkpoints, corpora and logs stay out.
 *
 !.gitkeep
 !.gitignore
 !*.json
-*.npz
+!ood_scores_*.npz
+*.pt
+*.safetensors
+*.log
