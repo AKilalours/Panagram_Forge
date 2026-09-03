@@ -63,11 +63,11 @@ class Assessment:
     # the limitations section.
     reason: str = "Visual detector unavailable. No AI probability is produced for images."
     detail: str = (
-        "The image verdict comes from a trained visual detector, which does not exist yet. "
-        "A score derived from metadata, compression or noise would respond mainly to "
-        "missing metadata, so it would read highest on screenshots, chat-app downloads and "
-        "re-saved photographs: ordinary human images. Everything shown for an image is "
-        "supporting evidence and none of it establishes authorship."
+        "No verdict is produced when the detector is missing or its polarity has not been "
+        "measured. A score derived instead from metadata, compression or noise would respond "
+        "mainly to missing metadata, so it would read highest on screenshots, chat-app "
+        "downloads and re-saved photographs: ordinary human images. Everything else shown "
+        "here is supporting evidence and none of it establishes authorship."
     )
 
     def as_dict(self) -> dict:
@@ -76,13 +76,22 @@ class Assessment:
 
 @dataclass(frozen=True)
 class Attribution:
-    """Where in the frame the evidence sits. Needs the local head."""
+    """Per-region AI/human segmentation. Needs a localisation head. Not the attribution map."""
 
     available: bool = False
     ai_area_fraction: float | None = None
     mixed_content: bool | None = None
     heatmap: str | None = None
-    reason: str = "the localisation head is untrained; no attribution map can be produced"
+    # This is the LOCALISATION field: a per-region AI/human segmentation, which needs a head
+    # FORGE-Image does not have. It is not the attribution map. Attribution is computed by
+    # forge.image.attribution, by occlusion over the loaded detector, and travels in the
+    # response under `attribution_map`. The two were easy to confuse, so both the field name
+    # and this reason now say which is which.
+    reason: str = (
+        "No per-region AI/human segmentation is produced; that needs a localisation head "
+        "this project has not trained. Region importance for the loaded detector is reported "
+        "separately as an occlusion attribution map."
+    )
 
     def as_dict(self) -> dict:
         return asdict(self)

@@ -169,3 +169,42 @@ def test_the_footer_carries_the_author():
     body = page()
     assert "Built by Akila Lourdes Miriyala Francis" in body
     assert "Report schema" not in body
+
+
+def test_no_shipped_string_says_the_visual_detector_does_not_exist():
+    """THE REGRESSION. A measured detector shipped while the payload still denied it.
+
+    `Assessment.detail` and `Attribution.reason` are dataclass defaults, so nothing in the
+    happy path exercised them, and every construction site overrides `detail`. That is
+    exactly why they rotted: a detector was built, measured and wired to the page, and the
+    JSON these defaults feed still told anyone reading it that no visual detector exists.
+    A reviewer reading the API response rather than the page would have been told the
+    project's main image claim was vapour.
+
+    The wording is allowed to say a verdict is unavailable. It is not allowed to say the
+    detector was never built.
+    """
+    from forge.image.report import Assessment, Attribution
+
+    forbidden = ("does not exist yet", "which does not exist", "untrained; no attribution")
+    for field in (Assessment().reason, Assessment().detail, Attribution().reason):
+        low = field.lower()
+        for phrase in forbidden:
+            assert phrase not in low, f"{phrase!r} is still shipped in {field!r}"
+
+
+def test_localisation_and_attribution_are_not_described_as_the_same_thing():
+    """They were, and the confusion is one rename away from shipping a false caveat.
+
+    `Attribution` in report.py is a per-region AI/human segmentation that needs a head this
+    project never trained. `forge.image.attribution` is occlusion importance over the
+    detector that IS loaded, and it travels under `attribution_map`. Saying "no attribution
+    map can be produced" next to a rendered attribution map is the failure this guards.
+    """
+    from forge.image.report import Attribution
+
+    reason = Attribution().reason.lower()
+    assert "segmentation" in reason or "localisation" in reason
+    assert "occlusion attribution" in reason, (
+        "the reason must point at the map that DOES exist, or it reads as a flat denial"
+    )
