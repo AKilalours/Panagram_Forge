@@ -83,7 +83,13 @@ def test_detector_state_never_raises_when_nothing_can_load(monkeypatch):
     """The page reads this to render system state. It must not be able to take the page down."""
     import forge.image.detector as D
 
+    # Every source of a model id has to be closed, not just the candidate list. The
+    # measured model recorded under reports/experiments deliberately OUTRANKS the candidate
+    # order (that fix stopped the probe measuring one model while the server served
+    # another), so emptying CANDIDATES alone left a working detector and this test asserted
+    # the failure path while exercising the success path.
     monkeypatch.setattr(D, "CANDIDATES", ())
+    monkeypatch.setattr(D, "measured_model_id", lambda: None)
     monkeypatch.setenv("FORGE_IMAGE_DETECTOR", "")
     D.load_detector.cache_clear()
     state = D.detector_state()

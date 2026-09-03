@@ -171,8 +171,13 @@ def test_the_text_endpoint_scores_with_both_arms_or_says_why_each_one_cannot() -
     accounted = {a["arm"] for a in body.get("arms", [])} | set(body.get("unavailable", {}))
     assert accounted == set(ARMS), f"arms unaccounted for: {set(ARMS) - accounted}"
     for arm in body.get("arms", []):
-        assert 0.0 <= arm["probability"] <= 1.0
+        # The payload key is `ai_probability`, not `probability`. Naming it from memory
+        # rather than from the response is how a test ends up asserting a field that does
+        # not exist, which is the same class of error as everything else fixed today.
+        assert 0.0 <= arm["ai_probability"] <= 1.0
+        assert 0.0 <= arm["max_window_probability"] <= 1.0
         assert arm["verdict"]
+        assert arm["threshold"] is not None, "a verdict with no threshold is not a decision"
     for name, reason in (body.get("unavailable") or {}).items():
         assert reason.strip(), f"arm {name} is unavailable with no stated reason"
 

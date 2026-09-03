@@ -146,7 +146,16 @@ def test_every_stage_reports_its_own_cost():
     for stage in ("forensics", "perceptual_hash", "evidence", "transform_stability", "detector"):
         assert stage in r.timings_ms, f"{stage} reports no cost"
         assert isinstance(r.timings_ms[stage], int)
-    assert r.timings_ms["detector"] == 0, "there is no image model; its cost must read zero"
+    # This asserted a flat zero on the reasoning that no image model exists. One does now,
+    # and on a machine with it cached the stage costs real milliseconds. Pinning zero made
+    # the test pass only where the detector was missing and fail on a working build. What
+    # must hold is that the number reflects whether the detector ran.
+    from forge.image.detector import detector_state
+
+    if detector_state().get("available"):
+        assert r.timings_ms["detector"] > 0, "the detector ran; its cost cannot read zero"
+    else:
+        assert r.timings_ms["detector"] == 0, "no detector ran; the cost must read zero"
     assert r.as_dict()["timings_ms"] == r.timings_ms
 
 
