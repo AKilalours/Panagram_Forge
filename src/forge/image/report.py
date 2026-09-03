@@ -55,11 +55,17 @@ class Assessment:
     verdict: str | None = None
     confidence: float | None = None
     band: str | None = None
-    reason: str = (
-        "FORGE-Image is architecturally complete and has not been trained: no image corpus "
-        "has been generated yet. A verdict synthesised from metadata would be a fabricated "
-        "confidence, and would fire hardest on screenshots and re-saved photographs, so "
-        "none is shown."
+    # Product wording, not development notes. The interface says WHAT the state is; the
+    # argument for why a metadata-derived score would be dishonest belongs in the docs and
+    # in this file, not on the page. `detail` carries the longer form for anyone who opens
+    # the limitations section.
+    reason: str = "Visual detector unavailable. No AI probability is produced for images."
+    detail: str = (
+        "The image verdict comes from a trained visual detector, which does not exist yet. "
+        "A score derived from metadata, compression or noise would respond mainly to "
+        "missing metadata, so it would read highest on screenshots, chat-app downloads and "
+        "re-saved photographs: ordinary human images. Everything shown for an image is "
+        "supporting evidence and none of it establishes authorship."
     )
 
     def as_dict(self) -> dict:
