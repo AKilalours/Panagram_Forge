@@ -36,6 +36,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from forge.image.maps import build_maps
 from forge.image.report import build_report
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
@@ -85,7 +86,19 @@ async def analyze_image(file: UploadFile = File(...)) -> JSONResponse:
             status_code=415,
             detail=f"unsupported or unreadable image (detected: {fmt.value if fmt else None})",
         )
-    return JSONResponse(report.as_dict())
+
+    # Forensic residual maps. NOT model saliency: no model is involved, and the panel says
+    # so. They show where in this frame each signal is strong, normalized within the frame,
+    # which is a thing a reader can go and check by looking. A map that cannot be computed
+    # is omitted rather than faked, so this list can legitimately be short or empty.
+    payload = report.as_dict()
+    payload["maps"] = build_maps(data)
+    payload["maps_note"] = (
+        "Forensic residual maps, not detector saliency. No model is involved. Each map is "
+        "normalized within this image, so brightness is relative to this frame and is not "
+        "comparable across images."
+    )
+    return JSONResponse(payload)
 
 
 class TextRequest(BaseModel):
@@ -182,6 +195,13 @@ _PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
  --ink:#e9ebef;--muted:#98a1ae;--line:#242a33;--accent:#7ba6dd;--ok:#5fbf8f;--warn:#dba847;
  --hot:#e37d66;--chip:#1d232b;--bar:#232a33}}
 *{box-sizing:border-box}
+.maps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
+.maps figure{margin:0}
+.maps img{width:100%;border-radius:7px;border:1px solid var(--line);display:block;
+ image-rendering:pixelated;background:var(--chip)}
+.maps figcaption{font-size:12px;color:var(--muted);margin-top:7px;line-height:1.45}
+.maps figcaption b{color:var(--ink)}
+.maps .caveat{display:block;margin-top:5px}
 .spark{display:flex;align-items:flex-end;gap:2px;height:44px;margin-top:10px;
  padding:4px;background:var(--chip);border-radius:6px}
 .spark i{flex:1;min-width:2px;background:var(--accent);border-radius:1px;opacity:.85}
@@ -319,8 +339,17 @@ function renderImage(d){
   h+=`<div class="card"><h3>AI attribution</h3>
     ${row('Attributed area',at.ai_area_fraction)}
     ${row('Mixed content',at.mixed_content)}
-    ${row('Heatmap',at.heatmap)}
+    ${row('Model saliency heatmap',at.heatmap)}
     <p class="caveat">${esc(at.reason)}</p></div>`;
+
+  const maps=d.maps||[];
+  h+=`<div class="card wide"><h3>Forensic maps</h3>
+    ${maps.length?`<div class="maps">${maps.map(m=>`<figure>
+      <img src="${m.image}" alt="${esc(m.title)}">
+      <figcaption><b>${esc(m.title)}</b><br>${esc(m.what_it_shows)}
+      <span class="caveat">${esc(m.caveat)}</span></figcaption></figure>`).join('')}</div>`
+    :'<p class="caveat">No map could be computed from this file.</p>'}
+    <p class="caveat">${esc(d.maps_note||'')}</p></div>`;
 
   h+=`<div class="card"><h3>Manipulation analysis</h3>${rows(d.manipulation)}</div>`;
   h+=`<div class="card"><h3>Provenance &amp; forensics</h3>${rows(d.provenance)}</div>`;
