@@ -1,0 +1,100 @@
+"""Label polarity, and the refusals that keep a wrong verdict off the page.
+
+The bug this file mostly exists for: assuming output index 1 is the AI class. A published
+classifier may order its classes either way. Guessing wrong inverts every verdict on the
+page while everything looks normal, which is exactly what happened to the MAGE benchmark in
+the text track, where a wrong polarity would have turned an AUROC of 0.05 into a reported
+0.95.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from forge.image.detector import (
+    ABSTAIN_HIGH,
+    ABSTAIN_LOW,
+    Detection,
+    LabelPolarityUnknown,
+    resolve_ai_index,
+)
+
+
+def test_polarity_is_read_from_the_names_either_way_round():
+    assert resolve_ai_index({0: "human", 1: "artificial"}) == 1
+    assert resolve_ai_index({0: "artificial", 1: "human"}) == 0
+    assert resolve_ai_index({"0": "Real", "1": "Fake"}) == 1
+    assert resolve_ai_index({0: "AI", 1: "Not AI"}) == 0
+
+
+def test_not_ai_is_read_before_ai():
+    """Substring order matters: 'not ai' contains 'ai'. Longest match wins."""
+    assert resolve_ai_index({0: "ai_generated", 1: "not_ai"}) == 0
+    assert resolve_ai_index({0: "non-ai", 1: "ai generated"}) == 1
+
+
+def test_unrecognised_labels_are_refused_rather_than_defaulted():
+    """THE ONE THAT MATTERS. No silent fall back to index 1."""
+    with pytest.raises(LabelPolarityUnknown) as error:
+        resolve_ai_index({0: "class_0", 1: "class_1"})
+    assert "class_0" in str(error.value), "the message must name the labels it saw"
+
+
+def test_two_ai_classes_are_refused_because_the_positive_class_is_ambiguous():
+    with pytest.raises(LabelPolarityUnknown):
+        resolve_ai_index({0: "midjourney", 1: "stable diffusion"})
+
+
+def test_all_human_labels_are_refused_because_nothing_means_ai():
+    with pytest.raises(LabelPolarityUnknown):
+        resolve_ai_index({0: "real", 1: "authentic"})
+
+
+def test_the_verdict_has_three_states_and_the_middle_one_declines():
+    """A detector at a low false-positive budget must be allowed to say "I do not know"."""
+    def verdict(p):
+        return Detection(ai_probability=p, model_id="m").verdict
+
+    assert verdict(0.01) == "human"
+    assert verdict(0.99) == "ai"
+    assert verdict(0.5) == "uncertain"
+    assert verdict(ABSTAIN_LOW) == "uncertain", "the band is inclusive at the low edge"
+    assert verdict(ABSTAIN_HIGH) == "ai", "the band is exclusive at the high edge"
+    assert verdict(ABSTAIN_LOW - 1e-9) == "human"
+
+
+def test_a_detection_never_claims_to_be_calibrated():
+    """Calibration needs a validation split from a corpus that does not exist yet."""
+    assert Detection(ai_probability=0.9, model_id="m").calibrated is False
+
+
+def test_detector_state_never_raises_when_nothing_can_load(monkeypatch):
+    """The page reads this to render system state. It must not be able to take the page down."""
+    import forge.image.detector as D
+
+    monkeypatch.setattr(D, "CANDIDATES", ())
+    monkeypatch.setenv("FORGE_IMAGE_DETECTOR", "")
+    D.load_detector.cache_clear()
+    state = D.detector_state()
+    assert state["available"] is False
+    assert state["reason"]
+    D.load_detector.cache_clear()
+
+
+def test_a_named_model_is_not_silently_replaced_by_a_fallback(monkeypatch):
+    """If the report names a detector, that detector produced the score."""
+    import forge.image.detector as D
+
+    tried = []
+
+    def _fail(model_id):
+        tried.append(model_id)
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(D, "_load_one", _fail)
+    monkeypatch.setenv("FORGE_IMAGE_DETECTOR", "someone/specific-model")
+    D.load_detector.cache_clear()
+    with pytest.raises(RuntimeError):
+        D.load_detector()
+    assert tried == ["someone/specific-model"], f"fell back to {tried}"
+    D.load_detector.cache_clear()

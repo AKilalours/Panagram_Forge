@@ -89,3 +89,62 @@ def test_the_module_imports_without_torch(monkeypatch):
     import forge.inference.scorer as s
 
     assert s.ARMS == ("baseline", "mirror")
+
+
+def test_a_half_precision_checkpoint_still_scores_on_cpu(tmp_path, monkeypatch):
+    """THE REGRESSION. Training ran in bf16; CPU matmul refuses to mix Half and Float.
+
+    The failure was total, not degraded: "mat1 and mat2 must have the same dtype, but got
+    Half and Float" at the first linear layer, so no text scored at all. It could only
+    appear on a machine without a GPU, which is the only machine this serving path is for,
+    and no test covered the loaded model's dtype.
+    """
+    torch = pytest.importorskip("torch")
+
+    class Tiny(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fc = torch.nn.Linear(4, 2)
+
+    model = Tiny().half()
+    assert next(model.parameters()).dtype is torch.float16, "fixture is not half"
+
+    model.float()
+    assert next(model.parameters()).dtype is torch.float32
+
+    x = torch.randn(1, 4)                       # float32, as a CPU batch arrives
+    model(x)                                    # would raise before .float()
+
+
+def test_the_loaded_arm_is_float32(tmp_path):
+    """Runs only where the real weights are present. Pins the property, not the mechanism."""
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+
+    import pathlib
+
+    if not pathlib.Path("outputs/forge_min_mirror/best.pt").exists():
+        pytest.skip("no local checkpoint; nothing to load")
+
+    arm = load_arm("mirror")
+    dtypes = {p.dtype for p in arm.model.parameters()}
+    assert dtypes == {torch.float32}, f"the served model carries {dtypes}"
+
+
+def test_the_loaded_arm_actually_scores_text():
+    """End to end on the real weights: a probability comes back, in range."""
+    pytest.importorskip("torch")
+    pytest.importorskip("transformers")
+
+    import pathlib
+
+    if not pathlib.Path("outputs/forge_min_mirror/best.pt").exists():
+        pytest.skip("no local checkpoint; nothing to load")
+
+    scored = load_arm("mirror").score(
+        "The committee reviewed the quarterly figures and concluded that the observed "
+        "variance in the reported totals arises from a change in accounting treatment "
+        "rather than from any underlying shift in customer demand. " * 4
+    )
+    assert 0.0 <= scored.mean <= 1.0
+    assert scored.n_windows >= 1

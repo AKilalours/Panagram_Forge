@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from forge.image.detector import ABSTAIN_HIGH, ABSTAIN_LOW
 from forge.image.evidence import Evidence, build_evidence
 from forge.image.forensics import (
     HIGH,
@@ -121,6 +122,10 @@ class Report:
     # a number nobody can act on: the only useful next question is WHICH stage, and
     # guessing at that is how people optimise the part that was already fast.
     timings_ms: dict = field(default_factory=dict)
+    # What produced the verdict, and whether the verdict survives transformation. Both are
+    # empty when no detector loaded; neither is ever filled from forensics.
+    detector: dict = field(default_factory=dict)
+    robustness: list = field(default_factory=list)
 
     def by_name(self, name: str) -> Finding | None:
         return next((f for f in self.findings if f.name == name), None)
@@ -144,6 +149,8 @@ class Report:
             "report_version": self.report_version,
             "cannot_conclude": self.cannot_conclude,
             "timings_ms": self.timings_ms,
+            "detector": self.detector,
+            "robustness": self.robustness,
         }
 
 
@@ -334,11 +341,45 @@ def _cannot_conclude(findings: list[Finding], stability: list[Row]) -> list[str]
     return lines
 
 
+def _detector_robustness(data: bytes, detector) -> list[dict]:
+    """Does the VERDICT survive the transforms an image meets in the wild?
+
+    Distinct from signal stability, which asks whether a forensic signal survives. A signal
+    can vanish while the verdict holds, and the verdict can flip while every signal is
+    intact. Reporting one as the other is the mistake this pair of panels exists to avoid.
+
+    The original is scored first and every row is compared against it, so a row says whether
+    the transform moved the answer, not merely what the answer was.
+    """
+    from forge.image.attacks import ATTACKS, apply_attack
+
+    base = detector.detect(data)
+    rows = [{
+        "attack": "original", "ai_probability": round(base.ai_probability, 4),
+        "verdict": base.verdict, "changed": False, "delta": 0.0,
+    }]
+    for attack in ATTACKS:
+        try:
+            variant = detector.detect(apply_attack(data, attack.name))
+        except Exception as error:  # noqa: BLE001 - a failed transform is reported as one
+            rows.append({"attack": attack.name, "error": f"{type(error).__name__}: {error}"})
+            continue
+        rows.append({
+            "attack": attack.name,
+            "ai_probability": round(variant.ai_probability, 4),
+            "verdict": variant.verdict,
+            "changed": variant.verdict != base.verdict,
+            "delta": round(variant.ai_probability - base.ai_probability, 4),
+        })
+    return rows
+
+
 def build_report(
     data: bytes,
     filename: str = "upload",
     preview: str | None = None,
     with_stability: bool = True,
+    with_detector: bool = True,
 ) -> Report:
     """Analyse one image end to end. Pure CPU: no GPU, no network, no model weights.
 
@@ -369,11 +410,41 @@ def build_report(
         if with_stability
         else ([], False)
     )
+    # The detector decides the verdict. Nothing else is allowed to.
+    detection, detector_info, detector_obj = None, {}, None
+    if with_detector:
+        mark = time.perf_counter()
+        try:
+            from forge.image.detector import load_detector
+
+            detector_obj = load_detector()
+            detection = detector_obj.detect(data)
+            detector_info = {
+                "available": True, "model_id": detection.model_id,
+                "calibrated": detection.calibrated, "labels": list(detection.labels),
+            }
+        except Exception as error:  # noqa: BLE001 - absence is reported, never substituted
+            detector_info = {"available": False, "reason": str(error)}
+        timings["detector"] = int((time.perf_counter() - mark) * 1000)
+    else:
+        timings["detector"] = 0
+
     evidence = _timed(
         "evidence",
-        lambda: build_evidence(findings, detector_available=False, probability=None),
+        lambda: build_evidence(
+            findings,
+            detector_available=detection is not None,
+            probability=detection.ai_probability if detection else None,
+        ),
     )
-    timings["detector"] = 0  # no image model yet; the slot exists so its cost is visible
+
+    robustness: list[dict] = []
+    if detector_obj is not None and with_stability:
+        robustness = _timed(
+            "detector_robustness",
+            lambda: _detector_robustness(data, detector_obj),
+            default=[],
+        )
 
     return Report(
         filename=filename,
@@ -381,7 +452,20 @@ def build_report(
         phash=fingerprint,
         findings=findings,
         evidence=evidence,
-        assessment=Assessment(),
+        assessment=(
+            Assessment(
+                available=True,
+                verdict=detection.verdict,
+                confidence=detection.ai_probability,
+                band=f"[{ABSTAIN_LOW}, {ABSTAIN_HIGH})",
+                reason=(
+                    "Uncalibrated probability from a baseline visual detector. The decision "
+                    "band is a documented default, not a threshold fitted on validation data."
+                ),
+            )
+            if detection is not None
+            else Assessment()
+        ),
         attribution=Attribution(),
         authenticity=_authenticity_rows(findings),
         manipulation=_manipulation_rows(findings),
@@ -392,4 +476,6 @@ def build_report(
         elapsed_ms=int((time.perf_counter() - started) * 1000),
         cannot_conclude=_cannot_conclude(findings, stability),
         timings_ms=timings,
+        detector=detector_info,
+        robustness=robustness,
     )

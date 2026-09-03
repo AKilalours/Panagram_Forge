@@ -50,8 +50,8 @@ def test_provenance_is_still_reachable_rather_than_deleted():
 
 def test_the_header_states_system_state_without_a_build_number():
     body = page()
-    header = body[body.index("let s={}; try{"):body.index("const drop=$('#drop')")]
-    assert "image detector not trained" in header
+    header = body[body.index("let s={}, img={};"):body.index("const drop=$('#drop')")]
+    assert "image detector " in header
     # Only the rendered string matters; the endpoint path may legitimately mention arms.
     shown = header[header.index("txt.textContent"):header.index("dot.className")]
     assert "v0." not in shown and "version" not in shown

@@ -233,6 +233,14 @@ def analyze_text(req: TextRequest) -> JSONResponse:
     })
 
 
+@app.get("/v1/image/detector")
+def image_detector_state() -> JSONResponse:
+    """Whether a visual detector can serve, and if not, the reason. Never raises."""
+    from forge.image.detector import detector_state
+
+    return JSONResponse(detector_state())
+
+
 @app.get("/v1/text/arms")
 def text_arms() -> JSONResponse:
     """Which arms can serve right now, and for those that cannot, the reason."""
@@ -418,12 +426,13 @@ const techRows=list=>list.map(r=>`<div class="techrow">
 // System state, read from the server rather than asserted in markup. A page that claims
 // "detector ready" while nothing is loaded is the same class of lie as a fabricated score.
 (async()=>{
-  let s={}; try{ s=await (await fetch('/v1/text/arms')).json(); }catch(e){}
+  let s={}, img={}; try{ s=await (await fetch('/v1/text/arms')).json(); }catch(e){}
+  try{ img=await (await fetch('/v1/image/detector')).json(); }catch(e){}
   const ready=Object.values(s).filter(v=>v==='ready').length;
   const dot=$('#status .dot'), txt=$('#statusText');
   txt.textContent='CPU · text detector '+(ready?'ready':'not loaded')
-    +' · image detector not trained';
-  dot.className='dot '+(ready?'ok':'na');
+    +' · image detector '+(img.available?'ready':'not loaded');
+  dot.className='dot '+(ready||img.available?'ok':'na');
 })();
 
 const drop=$('#drop'),input=$('#file');
@@ -507,10 +516,15 @@ function renderImage(d){
       </div></div>`;
 
   let h = banner({
-    available: false,
+    available: !!a.available,
+    verdict: a.verdict,
+    probability: a.confidence,
     reason: a.reason,
-    score_label: 'AI probability',
-    score_note: '',
+    score_label: a.available ? 'AI probability, uncalibrated' : 'AI probability',
+    score_note: a.available
+      ? `Decision band ${a.band}. Not fitted on validation data, and the probability is the `
+        + `model's own output rather than a calibrated one.`
+      : '',
   }) + `<div class="grid">`;
 
   h+=`<div class="card"><h3>Image</h3>
@@ -560,6 +574,20 @@ function renderImage(d){
 
     <h3 style="margin-top:20px">Provenance and forensics</h3>${rows(d.provenance)}
 
+    ${(d.robustness&&d.robustness.length)?`
+    <h3 style="margin-top:20px">Detector robustness</h3>
+    <p class="caveat">Whether the VERDICT survives each transform. Different from the signal
+    survival below: a signal can vanish while the verdict holds, and the verdict can flip
+    while every signal is intact.</p>
+    <div class="chips">${d.robustness.map(r=>r.error
+      ? `<div class="chip"><div class="n">${esc(r.attack)}</div>
+         <div class="d">${esc(r.error)}</div></div>`
+      : `<div class="chip"><div class="n">${esc(r.attack)}
+         <span class="pill ${r.changed?'hot':'ok'}">${r.changed?'verdict changed':'held'}</span></div>
+         <div class="d">${(r.ai_probability*100).toFixed(1)}%${r.attack==='original'?''
+           :` · ${r.delta>=0?'+':''}${(r.delta*100).toFixed(1)} pts`}</div></div>`).join('')}</div>`
+    :''}
+
     <h3 style="margin-top:20px">Signal stability under transformation</h3>
     ${d.stability_available
       ? `<div class="chips">${d.stability.map(s=>`<div class="chip">
@@ -573,12 +601,12 @@ function renderImage(d){
     exists this gains a second half, whether the VERDICT survives the same transform.</p>
     </div></details>`;
 
-  const T=d.timings_ms||{}, order=['preview','forensics','perceptual_hash','evidence',
-    'forensic_maps','transform_stability','detector'];
+  const T=d.timings_ms||{}, order=['preview','detector','forensics','perceptual_hash',
+    'evidence','forensic_maps','detector_robustness','transform_stability'];
   const NAME={preview:'Preview thumbnail',forensics:'Forensic analysis',
     perceptual_hash:'Perceptual hash',evidence:'Evidence engine',
     forensic_maps:'Forensic maps',transform_stability:'Transform stability (opt-in)',
-    detector:'Image detector inference'};
+    detector:'Image detector inference',detector_robustness:'Detector robustness (opt-in)'};
   const total=d.elapsed_ms;
   h+=`<details class="card wide fold"><summary>Performance details
       <span class="sum">${(total/1000).toFixed(1)} s on CPU</span></summary>
@@ -586,17 +614,22 @@ function renderImage(d){
     ${order.filter(k=>k in T).map(k=>{
       const ms=T[k], share=total?Math.round(100*ms/total):0;
       return `<div class="row"><span class="k">${esc(NAME[k]||k)}</span>
-        <span class="v">${k==='detector'&&ms===0?'<span class="pill na">not loaded</span>'
+        <span class="v">${k==='detector'&&!(d.detector&&d.detector.available)
+          ?'<span class="pill na">not loaded</span>'
           :ms.toLocaleString()+' ms'+(share>=5?' · '+share+'%':'')}</span></div>`;
     }).join('')}
     ${row('Total',total.toLocaleString()+' ms (CPU)')}
-    <p class="caveat">Measured per stage, not estimated. The detector row is zero because no
-    image model exists yet; the slot is here so its cost is visible the moment one does.</p>
+    <p class="caveat">Measured per stage, not estimated.</p>
     <p class="tech">Report schema ${esc(d.report_version)}</p></div></details>`;
 
   h+=`<details class="card wide fold"><summary>Limitations and interpretation</summary>
     <div class="foldbody">
     <p>${esc(a.detail||'')}</p>
+    ${d.detector&&d.detector.available?`<p class="tech">Verdict produced by a baseline visual
+      detector, ${esc(d.detector.model_id)}, classes ${esc((d.detector.labels||[]).join(', '))}.
+      It is a published third-party model used as a comparison point, not FORGE's own trained
+      detector, and its probability is uncalibrated for this project's operating point.</p>`
+      :`<p class="tech">${esc((d.detector&&d.detector.reason)||'')}</p>`}
     <ul class="cannot">${d.cannot_conclude.map(l=>'<li>'+esc(l)+'</li>').join('')}</ul>
     <p class="caveat">Supporting evidence describes the file. It does not establish who made
     the image, and results are least reliable for unseen generators and heavily transformed

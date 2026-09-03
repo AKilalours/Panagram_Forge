@@ -149,6 +149,13 @@ def load_arm(arm: str) -> Arm:
         stride=mcfg["window"]["stride"],
     ))
     load_checkpoint(checkpoint, model)
+
+    # FLOAT32, ALWAYS, ON CPU. Training ran in bf16, so parts of the checkpoint come back
+    # half precision. CPU matrix multiply refuses to mix: "mat1 and mat2 must have the same
+    # dtype, but got Half and Float". The failure is at the first linear layer, so nothing
+    # scores at all, and it only appears on a machine without a GPU, which is exactly where
+    # this code is meant to run. .float() is a no-op on an already-float model.
+    model.float()
     model.eval()
 
     policy = DecisionPolicy(
