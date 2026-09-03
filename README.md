@@ -10,20 +10,40 @@
 
 ## Status
 
+Tier 1 is complete: both arms trained, evaluated in distribution and against three
+held-out-generator benchmarks, with every number committed alongside the run that produced
+it. Read `docs/writeup.md` first, then `docs/evaluation.md` for the full tables.
+
 | Phase | What it is | State |
 |---|---|---|
 | 0 | Repo scaffold, Data Spec v1 frozen | done |
-| 1 | FORGE-HUMAN ingestion (FineWeb, FineWeb-Edu, public domain) | pipeline built and verified offline; real ingest not yet run |
-| 2 | Synthetic mirror engine, FORGE-MIRROR v0.1 | engine built and verified offline; real generation not yet run |
-| 3 | Baseline detector (encoder + document head + token head) | model, alignment, token labels, calibration and evaluation lab built and tested; **fit loop needs a GPU** |
-| 4 | Hard negative mining loop | mining, atlas, clustering and selection built and tested against synthetic failure structure; **needs a trained model to mine against** |
-| 5 | External evaluation (RAID, MAGE, HC3) | loaders and contamination checking built and tested against schema fixtures; **datasets unreachable from the dev environment** |
-| 6 | Adversarial laboratory | 8 offline attacks + lab runner built and tested; 4 model-based attacks refuse rather than fake |
-| 7 | Distributed training (FSDP / DeepSpeed / Ray), profiling | scaling math, config generation and the batch-invariant benchmark matrix built and tested; **needs GPUs to measure** |
-| 8 | Production serving, release gate, monitoring, UI | decision policy with abstention, batching, drift, feedback state machine, registry promotion and UI built and tested; **needs a model to serve** |
+| 1 | FORGE-HUMAN ingestion (FineWeb, FineWeb-Edu, public domain) | **done**, 60,000 documents, `dataset_version` v0.1-min |
+| 2 | Synthetic mirror engine, FORGE-MIRROR v0.1 | **done**, 30,000 AI documents per arm from four families at 1.7B to 3.8B |
+| 3 | Baseline detector (encoder + document head + token head) | **done**, arms A and B trained, DeBERTa-v3-base, one RTX 4090 |
+| 4 | Hard negative mining loop | mining, atlas, clustering and selection built and tested; **the CLI entrypoint is not yet wired to them, and arm C has not run** |
+| 5 | External evaluation (RAID, MAGE, HC3) | **done**, six cells, paired bootstrap and paired McNemar, score arrays committed |
+| 6 | Adversarial laboratory | 8 offline attacks + lab runner built and tested; **entrypoint not wired**; 4 model-based attacks refuse rather than fake |
+| 7 | Distributed training (FSDP / DeepSpeed / Ray), profiling | scaling math, config generation and the batch-invariant benchmark matrix built and tested; **needs 2 GPUs to measure, no scaling claim is made** |
+| 8 | Production serving, release gate, monitoring, UI | decision policy with abstention, batching, drift, feedback state machine, registry promotion and UI built and tested |
 
 Every number in this repo is either measured and committed with the run that
 produced it, or absent. There are no placeholder metrics in results tables.
+
+## The Tier 1 result, in three lines
+
+- In distribution the two arms cannot be separated: 0.719% against 0.430% FNR at an
+  identical 0.1% false-positive budget, **p = 0.217**, and AUROC 0.99997 on both.
+- Out of distribution the AUROC story does not hold up. On RAID the arms are tied and the
+  sign reverses in 72.7% of bootstrap resamples. But at a **matched** 0.1% FPR budget the
+  mirror arm catches **122** AI documents the control misses on RAID while losing nine the
+  other way, with no AUROC difference at all. Mirroring moved the low-false-positive tail
+  without moving the ranking.
+- **Neither arm is deployable off distribution.** Both miss 63% to 96% of AI text at a
+  usable threshold, and ECE goes from 0.004 in distribution to 0.18-0.44 outside it.
+
+**What is not yet tested is the thesis in the title.** Arm B is matched mirroring, not
+failure-driven selection. Arm C, hard negatives mined from arm B's own failures, is the arm
+that tests failure-driven generation, and it has not run.
 
 ## The flywheel
 
