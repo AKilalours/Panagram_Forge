@@ -595,15 +595,14 @@ function renderImage(d){
 
   const maps=d.maps||[];
   if(maps.length){
-    h+=`<details class="card wide fold"><summary>Pixel diagnostics
-      <span class="sum">not attribution</span></summary>
+    h+=`<details class="card wide fold"><summary>Pixel statistics</summary>
       <div class="foldbody">
       <div class="maps">${maps.map(m=>`<figure>
         <img src="${m.image}" alt="${esc(m.title)}">
         <figcaption><b>${esc(m.title)}</b><br>${esc(m.short||m.what_it_shows)}</figcaption>
         </figure>`).join('')}</div>
-      <p class="caveat">Statistics of the file, computed without any model. They are not
-      what the detector looked at; the panel above is.</p></div></details>`;
+      <p class="caveat">Computed from the file without any model. The attribution panel
+      above is what the detector used.</p></div></details>`;
   }
 
   const T=d.timings_ms||{}, order=['preview','detector','forensics','perceptual_hash',

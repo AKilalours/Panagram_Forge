@@ -122,7 +122,7 @@ def test_the_working_detector_is_the_tab_that_opens_first():
 def test_the_diagnostics_are_collapsed_and_the_verdict_is_not():
     """Product question first, diagnostics second. Collapsed, never deleted."""
     body = page()
-    for section in ("Pixel diagnostics", "Details"):
+    for section in ("Pixel statistics", "Details"):
         assert f"<summary>{section}" in body, f"{section} is not a collapsed section"
     assert 'details class="card wide fold"' in body
     # The verdict, the evidence and the robustness panel are open; nothing else is.
