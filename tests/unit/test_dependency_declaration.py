@@ -159,3 +159,52 @@ def test_the_serve_extra_can_actually_serve():
         + "; ".join(missing)
         + ". Installing '.[serve]' would give a server that boots and cannot load a model."
     )
+
+
+def test_the_tokenizer_backend_is_declared_wherever_the_text_arm_is_served():
+    """THE REGRESSION. torch and transformers were present and the text arm still failed.
+
+    The DeBERTa-v3 backbone tokenizer is a SentencePiece model. Without `sentencepiece`,
+    transformers falls back to a TikToken converter, that import fails too, and
+    AutoTokenizer.from_pretrained raises. The arm reports unavailable on a machine that has
+    the entire model stack installed, which reads as a broken checkpoint rather than a
+    missing package.
+
+    It is not discoverable by scanning imports: no file in this project imports
+    sentencepiece. It is a runtime backend transformers reaches for, so it has to be
+    asserted by name in both places the app is installed from.
+    """
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    serve = {
+        _normalise(re.split(r"[<>=!~\[;\s]", spec, maxsplit=1)[0])
+        for spec in data["project"]["optional-dependencies"]["serve"]
+    }
+    assert "sentencepiece" in serve, "the text arm cannot build its tokenizer without it"
+
+    space = _requirement_names((ROOT / "space" / "requirements.txt").read_text(encoding="utf-8"))
+    assert "sentencepiece" in space, "the deployed Space would serve a dead text tab"
+
+
+def test_transformers_is_pinned_below_5_in_both_installs():
+    """The arms' thresholds were fitted under transformers 4.x tokenisation.
+
+    Version 5 rewrote tokenizer construction. A threshold is only meaningful against the
+    tokenisation it was measured with, so an unpinned upper bound silently swaps the
+    tokeniser under a fixed decision boundary. Unpin this only together with a re-run of
+    the evaluation and a new record under reports/experiments.
+    """
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    specs = [
+        spec for group in
+        [data["project"].get("dependencies", [])]
+        + list(data["project"].get("optional-dependencies", {}).values())
+        for spec in group
+        if _normalise(re.split(r"[<>=!~\[;\s]", spec, maxsplit=1)[0]) == "transformers"
+    ]
+    assert specs, "transformers is not declared anywhere"
+    for spec in specs:
+        assert "<5" in spec, f"unbounded transformers requirement: {spec!r}"
+
+    space_text = (ROOT / "space" / "requirements.txt").read_text(encoding="utf-8")
+    line = [ln for ln in space_text.splitlines() if ln.strip().startswith("transformers")]
+    assert line and "<5" in line[0], f"the Space would install transformers 5: {line}"

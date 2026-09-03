@@ -9,5 +9,10 @@ pyyaml>=6.0
 # useless here.
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch>=2.2
-transformers>=4.40
+# Pinned below 5 and paired with sentencepiece for the same reason as pyproject.toml: the
+# DeBERTa-v3 tokenizer is a SentencePiece model, and transformers 5 changes how it is built.
+# Without this pair the Space boots, downloads the checkpoints, and reports the text
+# detector unavailable.
+transformers>=4.40,<5
+sentencepiece>=0.2
 huggingface_hub>=0.23

@@ -98,6 +98,11 @@ def test_a_half_precision_checkpoint_still_scores_on_cpu(tmp_path, monkeypatch):
     Half and Float" at the first linear layer, so no text scored at all. It could only
     appear on a machine without a GPU, which is the only machine this serving path is for,
     and no test covered the loaded model's dtype.
+
+    THIS TEST WAS ITSELF BROKEN and never caught anything, because `Tiny` had no `forward`
+    and the test only ever ran on a machine with torch installed, which the dev venv was
+    not. It "passed" as a skip for the whole project. It now does what it always claimed:
+    reproduce the failure first, then show that .float() removes it.
     """
     torch = pytest.importorskip("torch")
 
@@ -106,14 +111,21 @@ def test_a_half_precision_checkpoint_still_scores_on_cpu(tmp_path, monkeypatch):
             super().__init__()
             self.fc = torch.nn.Linear(4, 2)
 
+        def forward(self, x):
+            return self.fc(x)
+
     model = Tiny().half()
     assert next(model.parameters()).dtype is torch.float16, "fixture is not half"
 
-    model.float()
-    assert next(model.parameters()).dtype is torch.float32
-
     x = torch.randn(1, 4)                       # float32, as a CPU batch arrives
-    model(x)                                    # would raise before .float()
+    with pytest.raises(RuntimeError) as raised:
+        model(x)                                # the shipped bug, reproduced
+    assert "dtype" in str(raised.value).lower()
+
+    model.float()                               # the fix in src/forge/inference/scorer.py
+    assert next(model.parameters()).dtype is torch.float32
+    out = model(x)
+    assert out.dtype is torch.float32
 
 
 def test_the_loaded_arm_is_float32(tmp_path):

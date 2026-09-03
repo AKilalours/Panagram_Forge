@@ -40,7 +40,9 @@ image = [
 # Phase 2 and 3: generation and training
 train = [
   "torch>=2.3",
-  "transformers>=4.40",
+  # Same pin as `serve`: the checkpoints and their thresholds belong to 4.x tokenisation,
+  # so training and serving must not drift apart on the tokeniser.
+  "transformers>=4.40,<5",
   "accelerate>=0.29",
   "sentencepiece>=0.2",
   "scikit-learn>=1.4",
@@ -74,7 +76,18 @@ serve = [
   # therefore produced a server whose every detector reported "not loaded", with the app
   # itself booting fine, which is the hardest version of this failure to diagnose.
   "torch>=2.3",
-  "transformers>=4.40",
+  # PINNED BELOW 5. The arms were trained and evaluated on transformers 4.x. Version 5
+  # rewrote tokenizer construction: it no longer builds a DeBERTa-v3 tokenizer from the
+  # SentencePiece model directly and falls back to a TikToken converter, which changes the
+  # tokenizer for a checkpoint whose thresholds were fitted under the old one. A detection
+  # threshold is only meaningful against the tokenisation it was measured with, so this
+  # stays pinned until the arms are re-evaluated on 5.x and the numbers are recorded.
+  "transformers>=4.40,<5",
+  # The DeBERTa-v3 backbone tokenizer IS a SentencePiece model. Without this, transformers
+  # falls back to a converter that needs tiktoken, and loading the tokenizer fails, so the
+  # text detector reports unavailable on a machine that has torch and transformers. It was
+  # declared only under `train`, where it looks like a training-time need. It is not.
+  "sentencepiece>=0.2",
   "onnxruntime>=1.17",
   "prometheus-client>=0.20",
   "boto3>=1.34",
