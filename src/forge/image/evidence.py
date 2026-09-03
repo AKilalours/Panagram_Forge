@@ -66,8 +66,29 @@ class Stream:
     available: bool = True
     note: str = ""
 
+    @property
+    def state(self) -> str:
+        """The categorical label the panel shows INSTEAD of the number.
+
+        `strength` is how much a stream has to say, not how likely anything is. Rendered as
+        "50%" next to a bar it reads as "50% confidence", and next to a camera-metadata row
+        it reads as "50% likely to be a photograph". Neither is true and neither is
+        recoverable from a caption underneath. So the number stops being the headline: the
+        panel shows a word, the bar stays as a rough visual, and the number is available in
+        the payload for anyone who wants it.
+        """
+        if not self.available:
+            return "not available"
+        if self.strength == 0:
+            return "not detected"
+        if self.strength <= 30:
+            return "weak"
+        if self.strength <= 60:
+            return "partial"
+        return "detected"
+
     def as_dict(self) -> dict:
-        return asdict(self)
+        return asdict(self) | {"state": self.state}
 
 
 def _find(findings: list[Finding], name: str) -> Finding | None:

@@ -102,3 +102,32 @@ def test_the_maps_are_not_described_as_model_output():
         blob = (m["title"] + m["what_it_shows"] + m["caveat"]).lower()
         for forbidden in ("saliency", "the detector thinks", "model believes", "confidence"):
             assert forbidden not in blob, f"{m['name']} claims model output: {forbidden}"
+
+
+def test_stability_absent_is_reported_as_absent_not_as_nothing_survived():
+    """Opt-in must not read as a measurement.
+
+    The stability pass re-encodes the image ten times and is most of the analysis time, so
+    it is off by default. An empty list with `stability_available` still True would render
+    as "no signal survived any transform", which is the opposite of "not measured".
+    """
+    from forge.image.report import build_report
+
+    frame = _frame(flatten_patch=False)
+    off = build_report(frame, with_stability=False)
+    assert off.stability == [] and off.stability_available is False
+
+    on = build_report(frame, with_stability=True)
+    assert on.stability and on.stability_available is True
+
+
+def test_skipping_stability_does_not_change_any_other_finding():
+    """The gate must remove work, not alter conclusions."""
+    from forge.image.report import build_report
+
+    frame = _frame(flatten_patch=True)
+    off, on = build_report(frame, with_stability=False), build_report(frame, with_stability=True)
+    assert [f.as_dict() for f in off.findings] == [f.as_dict() for f in on.findings]
+    assert off.evidence.as_dict() == on.evidence.as_dict()
+    assert off.authenticity == on.authenticity
+    assert off.manipulation == on.manipulation

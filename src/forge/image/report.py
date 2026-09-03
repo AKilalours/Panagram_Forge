@@ -323,8 +323,20 @@ def _cannot_conclude(findings: list[Finding], stability: list[Row]) -> list[str]
     return lines
 
 
-def build_report(data: bytes, filename: str = "upload", preview: str | None = None) -> Report:
-    """Analyse one image end to end. Pure CPU: no GPU, no network, no model weights."""
+def build_report(
+    data: bytes,
+    filename: str = "upload",
+    preview: str | None = None,
+    with_stability: bool = True,
+) -> Report:
+    """Analyse one image end to end. Pure CPU: no GPU, no network, no model weights.
+
+    `with_stability` gates the transform-survival pass, which re-encodes the image ten times
+    and dominates the wall clock: about 35 of the 39 seconds a 2.8 MB JPEG takes. It answers
+    a question a reader asks second, after "what does this file say", so the interface runs
+    it on demand rather than making every upload wait for it. Off means the rows are absent
+    and `stability_available` is False, never that they are empty because nothing survived.
+    """
     import time
 
     started = time.perf_counter()
@@ -333,7 +345,7 @@ def build_report(data: bytes, filename: str = "upload", preview: str | None = No
         fingerprint = to_hex(dhash(data))
     except Exception:  # noqa: BLE001
         fingerprint = ""
-    stability, stability_available = _stability_rows(data)
+    stability, stability_available = _stability_rows(data) if with_stability else ([], False)
     evidence = build_evidence(findings, detector_available=False, probability=None)
 
     return Report(

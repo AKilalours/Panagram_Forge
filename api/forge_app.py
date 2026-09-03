@@ -13,16 +13,32 @@ WHAT IS LIVE TODAY
   Text tab    Posts to /v1/detect on the detection API. That endpoint returns 503 with a
               stated reason until a model is registered, and the page shows the reason.
 
-WHAT IS NOT, AND WHY IT IS NOT FAKED. The overall verdict and the attribution heatmap need
+WHAT IS NOT, AND WHY IT IS NOT FAKED. The image verdict and the attribution heatmap need
 trained weights. The reference design this page follows shows a large green "Human, 98.2%".
 That number comes from a calibrated model. Synthesising one from metadata would fire hardest
 on screenshots, chat-app downloads and re-saved photographs, because those have no EXIF and
 library quantisation tables: exactly the false positive against innocent human images that
-this entire project exists to prevent. So the assessment panel states its absence and the
-reason, and the evidence panel shows each stream separately rather than averaging them.
+this entire project exists to prevent. So the image banner shows the verdict and score slots
+PENDING, with the gauge greyed, rather than filled or removed. Built pending so the day a
+detector exists it fills in, instead of the panel being designed then.
 
-The layout keeps every panel of the target design. The panels that need a model are present,
-labelled, and will populate the moment weights exist.
+The TEXT banner is the same component with a real number in it, because that detector exists
+and is calibrated. One shape, two states, so the difference between "measured" and "not
+measured" is visible at a glance rather than inferred from which panels are missing.
+
+EVIDENCE STREAMS SHOW A WORD, NOT A PERCENTAGE. `strength` is how much a stream has to say,
+not a probability. "Camera metadata 50%" reads as "50% likely to be a photograph", which is
+not what it means and is not recoverable from a caption underneath. The bar stays as a rough
+visual, the number stays in the payload, and the panel says "partial".
+
+THE FORENSIC MAPS ARE NOT ATTRIBUTION. They are labelled low-level, carry a "not AI
+attribution" badge, and sit below the attribution panel that says the localisation head is
+untrained. A residual map next to an AI-detection product invites exactly the reading it
+cannot support.
+
+THE TRANSFORM-SURVIVAL PASS IS OPT-IN. It re-encodes the image ten times and was about 35 of
+the 39 seconds a 2.8 MB JPEG took. It answers a second-order question, so it runs on a
+button. Its absence is reported as absence, never as an empty result.
 
 Run:  uvicorn api.forge_app:app --port 8080
 """
@@ -72,14 +88,28 @@ def _thumbnail(data: bytes, box: int = 640) -> str | None:
 
 
 @app.post("/v1/image/analyze")
-async def analyze_image(file: UploadFile = File(...)) -> JSONResponse:
+async def analyze_image(
+    file: UploadFile = File(...),
+    stability: bool = False,
+) -> JSONResponse:
+    """Analyse one image. The transform-survival pass is opt-in.
+
+    That pass re-encodes the image ten times and is roughly 35 of the 39 seconds a 2.8 MB
+    JPEG used to take. It answers a second-order question, "would these signals survive
+    redistribution", so it runs on request rather than on every upload. Its absence is
+    reported as absence: `stability_available` is False, never an empty list that reads as
+    "nothing survived".
+    """
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty upload")
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail=f"file exceeds {MAX_IMAGE_BYTES} bytes")
 
-    report = build_report(data, filename=file.filename or "upload", preview=_thumbnail(data))
+    report = build_report(
+        data, filename=file.filename or "upload", preview=_thumbnail(data),
+        with_stability=stability,
+    )
     fmt = report.by_name("file_type")
     if fmt is None or fmt.value not in ACCEPTED:
         raise HTTPException(
@@ -195,6 +225,37 @@ _PAGE = r"""<!doctype html><html lang="en"><head><meta charset="utf-8">
  --ink:#e9ebef;--muted:#98a1ae;--line:#242a33;--accent:#7ba6dd;--ok:#5fbf8f;--warn:#dba847;
  --hot:#e37d66;--chip:#1d232b;--bar:#232a33}}
 *{box-sizing:border-box}
+.assess.big{display:flex;flex-wrap:wrap;gap:26px;align-items:center;
+ justify-content:space-between}
+.assess.big .verdictbox{display:flex;align-items:center;gap:16px;min-width:260px;flex:1 1 320px}
+.assess.big .mark{width:46px;height:46px;flex:none;border-radius:50%;display:flex;
+ align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#fff;
+ background:var(--muted)}
+.assess.big.ok .mark{background:var(--ok)} .assess.big.hot .mark{background:var(--hot)}
+.assess.big.warn .mark{background:var(--warn)}
+.assess.big.pending .mark{background:transparent;border:2px dashed var(--line);
+ color:var(--muted)}
+.assess.big h2{margin:0}
+.assess.big p{margin:5px 0 0;color:var(--muted);font-size:13px;max-width:52ch}
+.scorebox{min-width:230px;flex:0 1 300px;text-align:right}
+.scorelabel{font-size:11px;letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.score{font-size:34px;font-weight:680;line-height:1.15;margin-top:2px}
+.score.na{font-size:17px;font-weight:600;color:var(--muted);padding:9px 0}
+.gauge{position:relative;height:8px;border-radius:5px;margin-top:9px;
+ background:linear-gradient(90deg,var(--ok),var(--warn),var(--hot))}
+.assess.big.pending .gauge{background:var(--bar)}
+.gauge .needle{position:absolute;top:-4px;width:3px;height:16px;border-radius:2px;
+ background:var(--ink);transform:translateX(-50%)}
+.assess.big.pending .needle{background:var(--line)}
+.gaugeends{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);
+ margin-top:4px}
+.scorenote{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.45;text-align:left}
+.dir{display:block;margin-top:3px;font-size:11px;color:var(--muted);font-style:italic}
+.secondary{margin-top:9px;padding:8px 15px;border-radius:8px;border:1px solid var(--line);
+ background:var(--chip);color:var(--ink);font:inherit;font-weight:560;cursor:pointer}
+.secondary:hover{border-color:var(--accent);color:var(--accent)}
+.warnpill{background:var(--warn);color:#fff;margin-left:9px;font-size:10px;
+ letter-spacing:.05em;vertical-align:middle}
 .maps{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px}
 .maps figure{margin:0}
 .maps img{width:100%;border-radius:7px;border:1px solid var(--line);display:block;
@@ -302,19 +363,57 @@ drop.ondrop=e=>{e.preventDefault();drop.classList.remove('over');
 input.onchange=()=>input.files[0]&&sendImage(input.files[0]);
 
 async function sendImage(f){
+  // Remembered so the opt-in stability pass can re-run on the same file without asking
+  // the user to pick it again. A fresh upload resets the opt-in.
+  if(f){ window._forgeFile=f; window._forgeStability=false; } else { f=window._forgeFile; }
+  if(!f) return;
   $('#outImage').innerHTML='<div class="card">Analysing '+esc(f.name)+'…</div>';
   const body=new FormData(); body.append('file',f);
-  let r; try{ r=await fetch('/v1/image/analyze',{method:'POST',body}); }
+  let r; try{ r=await fetch('/v1/image/analyze?stability='+(window._forgeStability?'true':'false'),
+    {method:'POST',body}); }
   catch(e){ $('#outImage').innerHTML='<div class="card err">'+esc(e)+'</div>'; return; }
   if(!r.ok){ const d=await r.json().catch(()=>({detail:r.statusText}));
     $('#outImage').innerHTML='<div class="card err">'+esc(d.detail)+'</div>'; return; }
   renderImage(await r.json());
 }
 
+// The overall assessment banner. ONE shape for both tabs, with the score slot either
+// filled by a calibrated model or visibly pending. Built pending rather than omitted so
+// that the day a detector exists it fills in, instead of the panel being designed then.
+// It is never filled from metadata: a number synthesised from EXIF and JPEG tables would
+// fire hardest on screenshots and re-saved photographs, which are exactly the innocent
+// files this project exists to protect.
+function banner(o){
+  const pending = !o.available;
+  const pct = pending ? null : (o.probability*100);
+  const cls = pending ? 'pending' : (o.verdict==='ai'?'hot':o.verdict==='human'?'ok':'warn');
+  const pos = pending ? 50 : Math.min(100, Math.max(0, pct));
+  return `<div class="assess big ${cls}">
+    <div class="verdictbox">
+      <div class="mark">${pending?'?':(o.verdict==='ai'?'!':o.verdict==='human'?'✓':'~')}</div>
+      <div>
+        <h2>${esc(pending?'No verdict':o.verdict.toUpperCase())}</h2>
+        <p>${esc(o.reason||'')}</p>
+      </div>
+    </div>
+    <div class="scorebox">
+      <div class="scorelabel">${esc(o.score_label||'AI probability')}</div>
+      <div class="score ${pending?'na':''}">${pending?'not available':pct.toFixed(1)+'%'}</div>
+      <div class="gauge"><div class="needle" style="left:${pos}%"></div></div>
+      <div class="gaugeends"><span>human</span><span>uncertain</span><span>AI</span></div>
+      <div class="scorenote">${esc(o.score_note||'')}</div>
+    </div></div>`;
+}
+
 function renderImage(d){
   const a=d.assessment, at=d.attribution, ev=d.evidence;
-  let h=`<div class="assess"><h2>${esc(a.verdict||'No verdict')}</h2>
-    <p>${esc(a.reason)}</p></div><div class="grid">`;
+  let h=banner({
+    available: false,
+    reason: a.reason,
+    score_label: 'AI probability',
+    score_note: 'Needs the trained FORGE-Image detector. Nothing on this page substitutes '
+      + 'for it, and a number built from metadata would be fabricated confidence.',
+  }) + `<div class="grid">`;
 
   h+=`<div class="card"><h3>Image</h3>
     ${d.preview?`<img class="prev" src="${d.preview}" alt="preview">`:''}
@@ -322,14 +421,22 @@ function renderImage(d){
     ${row('File',d.filename)}${row('Size',(d.size_bytes/1024).toFixed(0)+' KB')}
     ${row('Perceptual hash',d.phash)}</div></div>`;
 
+  const DIR={toward_ai:'points to AI',toward_capture:'points to capture',neutral:'neutral'};
   h+='<div class="card"><h3>Evidence breakdown</h3>'+ev.streams.map(s=>{
     const k=s.direction==='toward_ai'?'ai':s.direction==='toward_capture'?'cap':
             (s.available?'':'off');
+    // A WORD, not a percentage. `strength` is how much a stream has to say, not a
+    // probability, and "50%" beside camera metadata reads as "50% likely a photograph".
     return `<div class="stream"><div class="top"><span>${esc(s.label)}</span>
-      <span>${s.available?s.strength+'%':'<span class="pill na">unavailable</span>'}</span></div>
+      <span><span class="pill ${s.available?'':'na'}">${esc(s.state)}</span></span></div>
       <div class="track"><div class="fill ${k}" style="width:${s.available?s.strength:100}%"></div></div>
-      <div class="sub">${esc(s.summary)}${s.note?' — '+esc(s.note):''}</div></div>`;
-  }).join('')+`<div class="row" style="margin-top:8px"><span class="k">Evidence conflict</span>
+      <div class="sub">${esc(s.summary)}${s.note?', '+esc(s.note):''}
+      ${s.available&&s.direction!=='neutral'?`<span class="dir">${esc(DIR[s.direction])}</span>`:''}</div>
+      </div>`;
+  }).join('')+`<p class="caveat">Each bar is how much that stream has to say, not a
+    probability. The streams are shown separately and never summed: only one of them can
+    point at AI, so an average of them would be meaningless.</p>
+    <div class="row" style="margin-top:8px"><span class="k">Evidence conflict</span>
     <span class="v"><span class="pill ${cls(ev.conflict)}">${esc(ev.conflict)}</span></span></div>
     <p class="caveat">${esc(ev.conflict_reason)}</p></div>`;
 
@@ -343,7 +450,11 @@ function renderImage(d){
     <p class="caveat">${esc(at.reason)}</p></div>`;
 
   const maps=d.maps||[];
-  h+=`<div class="card wide"><h3>Forensic maps</h3>
+  h+=`<div class="card wide"><h3>Low-level forensic maps
+      <span class="pill warnpill">not AI attribution</span></h3>
+    <p class="caveat">These are signal diagnostics computed from the pixels. They are NOT
+    predictions of which regions are AI-generated: that is the panel above, and it needs the
+    trained localisation head.</p>
     ${maps.length?`<div class="maps">${maps.map(m=>`<figure>
       <img src="${m.image}" alt="${esc(m.title)}">
       <figcaption><b>${esc(m.title)}</b><br>${esc(m.what_it_shows)}
@@ -351,16 +462,25 @@ function renderImage(d){
     :'<p class="caveat">No map could be computed from this file.</p>'}
     <p class="caveat">${esc(d.maps_note||'')}</p></div>`;
 
-  h+=`<div class="card"><h3>Manipulation analysis</h3>${rows(d.manipulation)}</div>`;
+  h+=`<div class="card"><h3>Manipulation analysis</h3>${rows(d.manipulation)}
+    <p class="caveat">The values are raw statistics from this file, not probabilities. A
+    resampling score of 373 is not "373 units of editing": it is the strength of a periodic
+    pattern, and the chip beside it is how that compares to an ordinary file. Post-processing
+    is orthogonal to authorship. Humans edit photographs.</p></div>`;
   h+=`<div class="card"><h3>Provenance &amp; forensics</h3>${rows(d.provenance)}</div>`;
 
   h+=`<div class="card wide"><h3>Signal stability under transformation</h3>
-    <div class="chips">${d.stability.map(s=>`<div class="chip">
-      <div class="n">${esc(s.label)} <span class="pill ${cls(s.status)}">${esc(lbl(s.status))}</span></div>
-      <div class="d">${s.value?esc(s.value):'not checked'}</div></div>`).join('')}</div>
+    ${d.stability_available
+      ? `<div class="chips">${d.stability.map(s=>`<div class="chip">
+          <div class="n">${esc(s.label)} <span class="pill ${cls(s.status)}">${esc(lbl(s.status))}</span></div>
+          <div class="d">${s.value?esc(s.value):'not checked'}</div></div>`).join('')}</div>`
+      : `<p class="caveat">Not run. This pass re-encodes your image ten times and is most of
+         the analysis time, so it is opt-in.</p>
+         <button id="runStability" class="secondary">Run stability check</button>`}
     <p class="caveat">This is signal survival, measured on your image, not detector
-    robustness: that needs the detector. A "high" chip means this transform destroys a
-    signal shown above.</p></div>`;
+    robustness: that needs the detector, and the two are different questions. A "high" chip
+    means this transform destroys a signal shown above. Once FORGE-Image is trained this
+    panel gains a second half: whether the VERDICT survives the same transform.</p></div>`;
 
   h+=`<div class="card wide"><h3>What this cannot tell you</h3>
     <ul class="cannot">${d.cannot_conclude.map(l=>'<li>'+esc(l)+'</li>').join('')}</ul></div>`;
@@ -369,6 +489,10 @@ function renderImage(d){
     ${row('Report version',d.report_version)}
     ${row('Image detector','not loaded','not_checked')}</div></div>`;
   $('#outImage').innerHTML=h;
+  const btn=$('#runStability');
+  if(btn) btn.onclick=()=>{ window._forgeStability=true;
+    $('#outImage').innerHTML='<div class="card">Re-encoding ten times, this takes a while…</div>';
+    sendImage(); };
 }
 
 $('#go').onclick=async()=>{
@@ -383,19 +507,36 @@ $('#go').onclick=async()=>{
     .map(([a,m])=>`<div class="card err"><h3>${esc(a)} unavailable</h3><p>${esc(m)}</p></div>`)
     .join('');
   if(!d.available){
-    $('#outText').innerHTML=`<div class="assess"><h2>No verdict</h2>
-      <p>Neither arm could be loaded, so no score is produced. A number here would be
-      fabricated.</p></div><div class="grid">${why}
+    $('#outText').innerHTML=banner({
+      available:false,
+      reason:'Neither arm could be loaded, so no score is produced. A number here would be '
+        +'fabricated.',
+      score_label:'AI probability, calibrated',
+      score_note:'Load a trained checkpoint into outputs/ to enable scoring.',
+    })+`<div class="grid">${why}
       <div class="card"><h3>Input</h3>${row('Words',d.words)}</div></div>`;
     return;
   }
 
-  // The two arms disagree near the threshold, and that disagreement is the experiment.
+  // The deployed arm is the headline. The other arm is shown beside it because the
+  // comparison is the experiment, but a product has one verdict, not two.
+  const primary = d.arms.find(a=>a.arm==='mirror') || d.arms[0];
   const agree = d.arms.length>1 && d.arms[0].verdict===d.arms[1].verdict;
-  const head = d.arms.length>1
-    ? (agree ? `Both arms say ${esc(d.arms[0].verdict)}`
-             : `The arms disagree: ${d.arms.map(a=>esc(a.arm)+' '+esc(a.verdict)).join(', ')}`)
-    : `${esc(d.arms[0].label)}: ${esc(d.arms[0].verdict)}`;
+  const head = banner({
+    available: true,
+    verdict: primary.verdict,
+    probability: primary.ai_probability,
+    reason: (d.arms.length>1
+      ? (agree ? 'Both arms agree.' : 'THE ARMS DISAGREE: '
+          + d.arms.map(a=>a.label+' says '+a.verdict).join(', ') + '.')
+      : 'Only one arm is loaded.')
+      + ` Mean over ${primary.n_windows} window${primary.n_windows===1?'':'s'}, `
+      + `${d.words} words.`,
+    score_label: 'AI probability, calibrated',
+    score_note: `${esc(primary.label)}, threshold ${primary.threshold.toFixed(6)} at a `
+      + `${primary.fpr_budget} false-positive budget. Validation ECE ${primary.val_ece}. `
+      + 'Out of distribution this model is badly miscalibrated: see the note below.',
+  });
 
   const spark = w => w.length<2 ? '' :
     `<div class="spark">${w.map(p=>`<i style="height:${Math.max(2,Math.round(p*100))}%"></i>`).join('')}</div>`;
@@ -413,9 +554,7 @@ $('#go').onclick=async()=>{
     ${row('Its validation ECE',a.val_ece)}
     ${spark(a.windows)}</div>`).join('');
 
-  $('#outText').innerHTML=`<div class="assess"><h2>${head}</h2>
-    <p>${esc(d.aggregation)}. ${d.arms.length} of 2 arms loaded, ${d.words} words.</p></div>
-    <div class="grid">${cards}${why}
+  $('#outText').innerHTML=head+`<div class="grid">${cards}${why}
     <div class="card wide"><h3>What this score is not</h3>
       <p>${esc(d.caveat)}</p><p>${esc(d.abstention)}</p></div></div>`;
 };
