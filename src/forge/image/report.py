@@ -1,71 +1,96 @@
-"""One analysis of one image, assembled from every signal that is actually available.
+"""One analysis of one image, assembled into the panels a person actually reads.
 
-WHY THIS FILE EXISTS SEPARATELY FROM forensics.py. The forensic signals are facts about a
-file. A REPORT is a document shown to a person, and the dangerous step is the one where
-facts become a verdict. That step belongs somewhere explicit, with its own rules, rather
-than scattered through the UI.
+WHY REPORTS ARE SEPARATE FROM FORENSICS. The forensic functions produce facts about a file.
+A report is a document shown to a human, and the dangerous step is the one where facts
+become a verdict. That step gets its own file, with its own rules, rather than being
+scattered through a template.
 
 THE TWO RULES.
 
-1. THE DETECTOR VERDICT IS ABSENT UNTIL A DETECTOR EXISTS. FORGE-Image's heads are not
-   trained. So `detector.available` is False, `verdict` is None, and the UI says so. It
-   does not say "Human, 98.2% confidence" from forensic signals, because forensic signals
-   cannot support that sentence. A confident verdict with nothing behind it is the exact
-   failure this project keeps finding, dressed as a product.
+1. THE VERDICT COMES FROM THE DETECTOR OR IT DOES NOT EXIST. FORGE-Image's heads are not
+   trained, so `assessment.available` is False and no confidence is shown. The reference
+   design this page follows puts a large "Human, 98.2%" at the top; that number comes from
+   a calibrated model, and manufacturing it from metadata would be worst on exactly the
+   images a detector must never accuse. Screenshots, chat-app downloads and re-saved
+   photographs all have no EXIF and library quantisation tables, so any naive combination
+   scores ordinary human images as suspicious.
 
-2. FORENSIC SIGNALS ARE NEVER SUMMED INTO A PROBABILITY. Stripped EXIF plus standard
-   quantisation tables does not equal "60% AI". Those two facts describe how the file was
-   written and are true of most photographs on the internet. Adding them would manufacture
-   confidence out of nothing and would fire hardest on exactly the innocent inputs a
-   detector must never accuse: screenshots, social-platform downloads, re-saved images.
+2. EVIDENCE STREAMS ARE REPORTED, NOT SUMMED. See forge.image.evidence for why. The short
+   version: the signals describe how a file was written, not what is in it, and averaging
+   them destroys the one genuinely informative case, which is disagreement between them.
 
-WHAT A READER GETS INSTEAD. Facts, each with its own caveat, plus a plain statement of what
-cannot be concluded. That is less satisfying than a number and it is the truthful version.
+WHAT IS REAL TODAY, with no model and no GPU: container format, EXIF, camera consistency,
+C2PA presence, self-declared generation markers, quantisation tables, error level analysis,
+resampling periodicity, noise consistency, colour statistics, perceptual hash, and a
+transform-stability check that shows which signals survive resizing, recompression and
+metadata removal. That last one is a real robustness result about the FILE; detector
+robustness needs the detector and says so.
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from forge.image.evidence import Evidence, build_evidence
 from forge.image.forensics import (
-    FORENSICS_VERSION,
+    HIGH,
+    LOW,
+    MEDIUM,
+    NOT_CHECKED,
+    NOT_FOUND,
+    PRESENT,
     Finding,
     analyze,
 )
-from forge.image.phash import dhash, to_hex
+from forge.image.phash import dhash, distance, to_hex
 
-REPORT_VERSION = "image_report_v1"
-
-# Fields the detector section will carry once the heads are trained. Declared here so the
-# UI can be written against the final shape and simply render "not available" today.
-DETECTOR_FIELDS = ("verdict", "probability", "abstain_band", "heatmap_png", "backbone")
+REPORT_VERSION = "image_report_v2"
 
 
 @dataclass(frozen=True)
-class DetectorResult:
-    """The model's answer, or an honest statement that there is not one.
-
-    `available` False is the current state: the architecture in forge.image.model exists,
-    the training index exists, and no weights have been fitted. Everything else in a report
-    is real today; this is the part that is not, and it says so.
-    """
+class Assessment:
+    """The headline. Empty until a detector exists, and it says why."""
 
     available: bool = False
-    reason: str = (
-        "FORGE-Image is architecturally complete but has not been trained: no image corpus "
-        "has been generated yet. Producing a verdict from the forensic signals alone would "
-        "be a fabricated confidence, so none is shown."
-    )
     verdict: str | None = None
-    probability: float | None = None
-    heatmap_png: bytes | None = None
-    backbone: str | None = None
+    confidence: float | None = None
+    band: str | None = None
+    reason: str = (
+        "FORGE-Image is architecturally complete and has not been trained: no image corpus "
+        "has been generated yet. A verdict synthesised from metadata would be a fabricated "
+        "confidence, and would fire hardest on screenshots and re-saved photographs, so "
+        "none is shown."
+    )
 
     def as_dict(self) -> dict:
-        out = asdict(self)
-        out.pop("heatmap_png", None)
-        out["heatmap"] = "available" if self.heatmap_png else None
-        return out
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Attribution:
+    """Where in the frame the evidence sits. Needs the local head."""
+
+    available: bool = False
+    ai_area_fraction: float | None = None
+    mixed_content: bool | None = None
+    heatmap: str | None = None
+    reason: str = "the localisation head is untrained; no attribution map can be produced"
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class Row:
+    """One labelled line in a panel."""
+
+    label: str
+    value: str | None
+    status: str
+    note: str = ""
+
+    def as_dict(self) -> dict:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -74,10 +99,18 @@ class Report:
     size_bytes: int
     phash: str
     findings: list[Finding]
-    detector: DetectorResult = field(default_factory=DetectorResult)
-    forensics_version: str = FORENSICS_VERSION
-    report_version: str = REPORT_VERSION
+    evidence: Evidence
+    assessment: Assessment
+    attribution: Attribution
+    authenticity: list[Row]
+    manipulation: list[Row]
+    provenance: list[Row]
+    stability: list[Row]
+    stability_available: bool
+    preview: str | None = None
     elapsed_ms: int = 0
+    report_version: str = REPORT_VERSION
+    cannot_conclude: list[str] = field(default_factory=list)
 
     def by_name(self, name: str) -> Finding | None:
         return next((f for f in self.findings if f.name == name), None)
@@ -88,46 +121,209 @@ class Report:
             "size_bytes": self.size_bytes,
             "phash": self.phash,
             "findings": [f.as_dict() for f in self.findings],
-            "detector": self.detector.as_dict(),
-            "forensics_version": self.forensics_version,
-            "report_version": self.report_version,
+            "evidence": self.evidence.as_dict(),
+            "assessment": self.assessment.as_dict(),
+            "attribution": self.attribution.as_dict(),
+            "authenticity": [r.as_dict() for r in self.authenticity],
+            "manipulation": [r.as_dict() for r in self.manipulation],
+            "provenance": [r.as_dict() for r in self.provenance],
+            "stability": [r.as_dict() for r in self.stability],
+            "stability_available": self.stability_available,
+            "preview": self.preview,
             "elapsed_ms": self.elapsed_ms,
+            "report_version": self.report_version,
+            "cannot_conclude": self.cannot_conclude,
         }
 
-    @property
-    def headline(self) -> str:
-        """The single sentence shown at the top. Never a verdict we cannot support."""
-        if self.detector.available and self.detector.verdict:
-            return self.detector.verdict
-        return "No detector verdict"
 
-    @property
-    def what_this_cannot_say(self) -> list[str]:
-        """Stated explicitly in the UI, because the absence of a claim is easy to miss.
-
-        Every line here is a conclusion a reader might otherwise draw from the panels above
-        it. Naming them is cheaper than letting someone leave with the wrong impression.
-        """
-        lines = [
-            "Whether this image was generated by AI. That needs the trained detector, and "
-            "it has not been trained yet.",
-        ]
-        exif_finding = self.by_name("exif")
-        if exif_finding and exif_finding.status != "present":
-            lines.append(
-                "Nothing, from the missing EXIF. Screenshots, social-platform downloads "
-                "and chat apps all strip metadata from ordinary photographs."
-            )
-        tables = self.by_name("jpeg_tables")
-        if tables and isinstance(tables.value, dict) and tables.value.get("standard_tables"):
-            lines.append(
-                "Nothing, from the standard quantisation tables. They mean a software "
-                "library wrote the file, which is equally true of a re-saved photograph."
-            )
-        return lines
+def _get(findings: list[Finding], name: str) -> Finding | None:
+    return next((f for f in findings if f.name == name), None)
 
 
-def build_report(data: bytes, filename: str = "upload") -> Report:
+def _authenticity_rows(findings: list[Finding]) -> list[Row]:
+    exif = _get(findings, "exif")
+    fields = exif.value if exif and isinstance(exif.value, dict) else {}
+    consistency = _get(findings, "camera_consistency")
+    c2pa = _get(findings, "c2pa")
+    declaration = _get(findings, "ai_declaration")
+    fmt = _get(findings, "file_type")
+
+    camera = " ".join(
+        v for v in (fields.get("camera_make"), fields.get("camera_model")) if v
+    ) or None
+    captured = fields.get("datetime_original") or fields.get("datetime")
+
+    return [
+        Row("Camera", camera, PRESENT if camera else NOT_FOUND,
+            "read from EXIF; editable by anything that writes the file"),
+        Row("Capture date", captured, PRESENT if captured else NOT_FOUND,
+            "an EXIF claim, not a verified timestamp"),
+        Row("Metadata consistency",
+            consistency.value if consistency and consistency.value else None,
+            consistency.status if consistency else NOT_CHECKED,
+            "describes the metadata's internal shape, not the pixels"),
+        Row("C2PA signature",
+            "Markers present" if c2pa and c2pa.status == PRESENT else None,
+            c2pa.status if c2pa else NOT_CHECKED,
+            "structural detection only; not cryptographically verified"),
+        Row("Generation marker",
+            "; ".join(declaration.value[:2]) if declaration and declaration.value else None,
+            declaration.status if declaration else NOT_CHECKED,
+            "the file's own declaration; absence means nothing"),
+        Row("File type", fmt.value if fmt else None, fmt.status if fmt else NOT_CHECKED,
+            "read from the magic bytes, not the extension"),
+    ]
+
+
+def _manipulation_rows(findings: list[Finding]) -> list[Row]:
+    error = _get(findings, "error_level")
+    resample = _get(findings, "resample")
+    noise = _get(findings, "noise_consistency")
+    colour = _get(findings, "colour")
+    summary = _get(findings, "manipulation_summary")
+
+    def _val(finding: Finding | None, key: str) -> str | None:
+        if not finding or not isinstance(finding.value, dict):
+            return None
+        value = finding.value.get(key)
+        return None if value is None else str(value)
+
+    return [
+        Row("Recompression", _val(error, "mean_residual"),
+            error.status if error else NOT_CHECKED,
+            "error level analysis responds to any re-encode, innocent ones included"),
+        Row("Residual patchiness", _val(error, "patchiness"),
+            error.status if error else NOT_CHECKED,
+            "uneven residual suggests regions with different compression history"),
+        Row("Resizing", _val(resample, "peak_to_median"),
+            resample.status if resample else NOT_CHECKED,
+            "a later JPEG pass destroys this signal, so absence proves nothing"),
+        Row("Noise uniformity", _val(noise, "variation"),
+            noise.status if noise else NOT_CHECKED,
+            "smooth skies and denoising produce uneven noise in genuine photographs"),
+        Row("Clipping", _val(colour, "clipped_fraction"),
+            colour.status if colour else NOT_CHECKED,
+            "heavy clipping suggests aggressive grading, nothing about authorship"),
+        Row("Strongest signal", summary.value if summary else None,
+            summary.status if summary else NOT_CHECKED,
+            "the strongest single signal, deliberately not a combined score"),
+    ]
+
+
+def _provenance_rows(findings: list[Finding]) -> list[Row]:
+    exif = _get(findings, "exif")
+    c2pa = _get(findings, "c2pa")
+    fmt = _get(findings, "file_type")
+    tables = _get(findings, "jpeg_tables")
+    quality = (
+        str(tables.value.get("estimated_quality"))
+        if tables and isinstance(tables.value, dict)
+        else None
+    )
+    standard = (
+        tables.value.get("standard_tables")
+        if tables and isinstance(tables.value, dict)
+        else None
+    )
+    return [
+        Row("C2PA manifest", "Present" if c2pa and c2pa.status == PRESENT else None,
+            c2pa.status if c2pa else NOT_CHECKED,
+            "almost nothing signs its output today; absence is the normal case"),
+        Row("EXIF block",
+            f"{exif.detail.get('field_count')} fields" if exif and exif.status == PRESENT else None,
+            exif.status if exif else NOT_CHECKED,
+            "stripped by every social platform and every screenshot"),
+        Row("Container", fmt.value if fmt else None, fmt.status if fmt else NOT_CHECKED,
+            "the real format, from the magic bytes"),
+        Row("Encoder quality", quality, tables.status if tables else NOT_CHECKED,
+            "inverted from the quantisation tables"),
+        Row("Quantisation tables",
+            None if standard is None else ("Library defaults" if standard else "Custom / camera"),
+            tables.status if tables else NOT_CHECKED,
+            "library defaults describe most generated images AND most re-saved photographs"),
+    ]
+
+
+def _stability_rows(data: bytes) -> tuple[list[Row], bool]:
+    """Which signals survive the transforms an image meets in the wild?
+
+    THIS IS NOT DETECTOR ROBUSTNESS. Detector robustness asks whether the model's verdict
+    holds under attack, and needs the model. This asks whether the FILE's signals hold, and
+    is answerable today.
+
+    It is also genuinely informative: it demonstrates, on the reader's own image, that
+    metadata removal destroys the provenance evidence entirely while the perceptual hash
+    survives compression. That is the practical reason a detector cannot lean on metadata.
+    """
+    from forge.image.attacks import ATTACKS, apply_attack
+    from forge.image.forensics import ai_declaration, exif
+
+    try:
+        original_hash = dhash(data)
+        had_exif = exif(data).status == PRESENT
+        had_declaration = ai_declaration(data).status == HIGH
+    except Exception:  # noqa: BLE001
+        return [], False
+
+    rows: list[Row] = []
+    for attack in ATTACKS:
+        try:
+            transformed = apply_attack(data, attack.name)
+            drift = distance(original_hash, dhash(transformed))
+            kept_exif = exif(transformed).status == PRESENT
+            kept_declaration = ai_declaration(transformed).status == HIGH
+        except Exception:  # noqa: BLE001
+            rows.append(Row(attack.name, None, NOT_CHECKED, "transform failed on this file"))
+            continue
+
+        lost = []
+        if had_exif and not kept_exif:
+            lost.append("EXIF")
+        if had_declaration and not kept_declaration:
+            lost.append("generation marker")
+        status = HIGH if lost else (MEDIUM if drift > 6 else LOW)
+        detail = f"hash drift {drift}/64"
+        if lost:
+            detail += ", lost " + " and ".join(lost)
+        rows.append(
+            Row(attack.name, detail, status,
+                "signal survival under this transform, not detector robustness")
+        )
+    return rows, True
+
+
+def _cannot_conclude(findings: list[Finding], stability: list[Row]) -> list[str]:
+    lines = [
+        "Whether this image was generated. That needs the trained detector, which does not "
+        "exist yet. Nothing on this page is a substitute for it.",
+    ]
+    exif = _get(findings, "exif")
+    if exif and exif.status != PRESENT:
+        lines.append(
+            "Anything, from the missing EXIF. Screenshots, social-platform downloads and "
+            "chat apps strip metadata from ordinary photographs."
+        )
+    tables = _get(findings, "jpeg_tables")
+    if tables and isinstance(tables.value, dict) and tables.value.get("standard_tables"):
+        lines.append(
+            "Anything, from the library quantisation tables. They mean software wrote the "
+            "file, which is equally true of a re-saved photograph."
+        )
+    declaration = _get(findings, "ai_declaration")
+    if declaration and declaration.status != HIGH:
+        lines.append(
+            "Anything, from the absent generation marker. Most generators write none and "
+            "any editor removes them."
+        )
+    if any(r.status == HIGH for r in stability):
+        lines.append(
+            "That the signals shown above would survive redistribution. The stability panel "
+            "shows which of them a routine transform destroys."
+        )
+    return lines
+
+
+def build_report(data: bytes, filename: str = "upload", preview: str | None = None) -> Report:
     """Analyse one image end to end. Pure CPU: no GPU, no network, no model weights."""
     import time
 
@@ -135,13 +331,25 @@ def build_report(data: bytes, filename: str = "upload") -> Report:
     findings = analyze(data)
     try:
         fingerprint = to_hex(dhash(data))
-    except Exception:  # noqa: BLE001 - a hash failure must not sink the whole report
+    except Exception:  # noqa: BLE001
         fingerprint = ""
-    elapsed = int((time.perf_counter() - started) * 1000)
+    stability, stability_available = _stability_rows(data)
+    evidence = build_evidence(findings, detector_available=False, probability=None)
+
     return Report(
         filename=filename,
         size_bytes=len(data),
         phash=fingerprint,
         findings=findings,
-        elapsed_ms=elapsed,
+        evidence=evidence,
+        assessment=Assessment(),
+        attribution=Attribution(),
+        authenticity=_authenticity_rows(findings),
+        manipulation=_manipulation_rows(findings),
+        provenance=_provenance_rows(findings),
+        stability=stability,
+        stability_available=stability_available,
+        preview=preview,
+        elapsed_ms=int((time.perf_counter() - started) * 1000),
+        cannot_conclude=_cannot_conclude(findings, stability),
     )

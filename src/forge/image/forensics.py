@@ -423,7 +423,10 @@ def manipulation_summary(findings: list[Finding]) -> Finding:
     and presenting them as one invites a reader to treat a guess as a measurement. What is
     reported is the strongest individual signal and which signals drove it.
     """
-    relevant = [f for f in findings if f.name in {"error_level", "resample"}]
+    relevant = [
+        f for f in findings
+        if f.name in {"error_level", "resample", "noise_consistency", "colour"}
+    ]
     scored = [(f, _ORDER.get(f.status, 0)) for f in relevant if f.status != NOT_CHECKED]
     if not scored:
         return Finding(
@@ -455,9 +458,175 @@ def analyze(data: bytes) -> list[Finding]:
         ex,
         camera_consistency(ex),
         c2pa_status(data),
+        ai_declaration(data),
         jpeg_tables(data),
         error_level(data),
         resample_evidence(data),
+        noise_consistency(data),
+        colour_statistics(data),
     ]
     findings.append(manipulation_summary(findings))
     return findings
+
+
+# ------------------------------------------------------- self-declared generation markers
+
+
+# Generators increasingly stamp their output, and these are the real, checkable
+# declarations. This is the ONE model-free signal that can positively indicate AI rather
+# than merely describing how a file was written.
+#
+#   IPTC digitalSourceType = trainedAlgorithmicMedia  is the published standard for
+#   declaring synthetic media. Adobe Firefly, Google and others write it.
+#
+#   PNG tEXt "parameters" is what AUTOMATIC1111 and most Stable Diffusion front-ends
+#   write: the literal prompt, sampler, seed and model hash.
+#
+#   The rest are software strings generators leave in EXIF or XMP.
+_AI_DECLARATIONS = (
+    (b"trainedalgorithmicmedia", "IPTC digitalSourceType: trained algorithmic media"),
+    (b"compositewithtrainedalgorithmicmedia", "IPTC: composite with algorithmic media"),
+    (b"algorithmicmedia", "IPTC digitalSourceType: algorithmic media"),
+    (b"stable diffusion", "Stable Diffusion software string"),
+    (b"stablediffusion", "Stable Diffusion software string"),
+    (b"midjourney", "Midjourney software string"),
+    (b"dall-e", "DALL-E software string"),
+    (b"firefly", "Adobe Firefly software string"),
+    (b"imagen", "Google Imagen software string"),
+    (b"comfyui", "ComfyUI workflow marker"),
+    (b"automatic1111", "AUTOMATIC1111 marker"),
+    (b"invokeai", "InvokeAI marker"),
+    (b"novelai", "NovelAI marker"),
+)
+
+# Keys Stable Diffusion pipelines write into PNG text chunks.
+_SD_PARAM_KEYS = (b"parameters", b"negative prompt", b"sampler", b"cfg scale", b"model hash")
+
+
+def ai_declaration(data: bytes) -> Finding:
+    """Does the file DECLARE that it was generated?
+
+    The only model-free signal that can positively indicate AI, and a strong one when
+    present, because nothing else writes these strings. Scanned over the metadata region
+    rather than the whole file so compressed pixel data cannot produce a coincidental hit.
+
+    THE ASYMMETRY, which the UI must preserve:
+
+        PRESENT -> the file says it is generated. Believe it, and note it is a claim by
+                   the producing software rather than a measurement of the pixels.
+        ABSENT  -> nothing at all. Most generators write nothing, every editor strips
+                   metadata, and a screenshot of an AI image carries none of it.
+
+    Reading absence as evidence of human authorship would be the same false-positive engine
+    this project exists to avoid, pointed the other way.
+    """
+    head = data[:1_048_576].lower()
+    hits = [label for marker, label in _AI_DECLARATIONS if marker in head]
+    sd_keys = [k.decode() for k in _SD_PARAM_KEYS if k in head]
+    if len(sd_keys) >= 2:
+        hits.append("Stable Diffusion parameter block (" + ", ".join(sd_keys[:3]) + ")")
+
+    if hits:
+        return Finding(
+            name="ai_declaration",
+            value=hits,
+            status=HIGH,
+            caveat=(
+                "the file declares generated content. A claim written by the producing "
+                "software, and the strongest model-free indicator available"
+            ),
+            detail={"markers": len(hits)},
+        )
+    return Finding(
+        name="ai_declaration",
+        value=None,
+        status=NOT_FOUND,
+        caveat=(
+            "no self-declaration. This means NOTHING: most generators write none, every "
+            "editor strips metadata, and a screenshot of an AI image carries none"
+        ),
+    )
+
+
+def noise_consistency(data: bytes) -> Finding:
+    """Is the high-frequency noise floor uniform across the frame?
+
+    A photograph carries roughly uniform sensor noise. Regions pasted, inpainted or heavily
+    denoised sit at a different level. Measured as the dispersion of a Laplacian high-pass
+    residual across a grid.
+
+    Smooth sky, shallow depth of field and denoising all produce uneven noise in entirely
+    genuine photographs, so this describes the frame rather than accusing it.
+    """
+    import numpy as np
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            grey = np.asarray(img.convert("L"), dtype=np.float64)
+        if min(grey.shape) < 48:
+            return Finding(
+                "noise_consistency", None, NOT_CHECKED,
+                "image too small to estimate a noise floor",
+            )
+        hp = (
+            grey[1:-1, 1:-1] * 4
+            - grey[:-2, 1:-1] - grey[2:, 1:-1] - grey[1:-1, :-2] - grey[1:-1, 2:]
+        )
+        h, w = hp.shape
+        ch, cw = max(1, h // 6), max(1, w // 6)
+        cells = [
+            float(hp[y : y + ch, x : x + cw].std())
+            for y in range(0, h - ch + 1, ch)
+            for x in range(0, w - cw + 1, cw)
+        ]
+        cells = [c for c in cells if c > 1e-6]
+        if len(cells) < 4:
+            raise ValueError("too few usable cells")
+        spread = float(np.std(cells) / np.mean(cells))
+    except Exception as error:  # noqa: BLE001
+        return _fail_soft("noise_consistency", error, "")
+
+    status = HIGH if spread > 1.1 else MEDIUM if spread > 0.7 else LOW
+    return Finding(
+        name="noise_consistency",
+        value={"variation": round(spread, 3)},
+        status=status,
+        caveat=(
+            "smooth skies, shallow depth of field and denoising all produce uneven noise "
+            "in genuine photographs; this describes the frame, it does not accuse it"
+        ),
+    )
+
+
+def colour_statistics(data: bytes) -> Finding:
+    """Channel balance, saturation and clipping.
+
+    A reader looking at a colour and lighting row deserves the actual numbers rather than a
+    verdict. Heavy clipping suggests aggressive processing and nothing more: no colour
+    statistic distinguishes a generator from a camera.
+    """
+    import numpy as np
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            rgb = np.asarray(img.convert("RGB"), dtype=np.float64)
+        means = rgb.reshape(-1, 3).mean(axis=0)
+        maxc, minc = rgb.max(axis=2), rgb.min(axis=2)
+        saturation = float(np.mean((maxc - minc) / np.maximum(maxc, 1e-6)))
+        clipped = float((rgb >= 254).all(axis=2).mean() + (rgb <= 1).all(axis=2).mean())
+    except Exception as error:  # noqa: BLE001
+        return _fail_soft("colour", error, "")
+
+    status = HIGH if clipped > 0.12 else MEDIUM if clipped > 0.04 else LOW
+    return Finding(
+        name="colour",
+        value={
+            "channel_means": [round(float(m), 1) for m in means],
+            "saturation": round(saturation, 3),
+            "clipped_fraction": round(clipped, 4),
+        },
+        status=status,
+        caveat="describes grading and exposure; no colour statistic separates AI from a camera",
+    )

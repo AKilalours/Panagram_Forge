@@ -266,9 +266,12 @@ def test_analyze_returns_every_signal() -> None:
         "exif",
         "camera_consistency",
         "c2pa",
+        "ai_declaration",
         "jpeg_tables",
         "error_level",
         "resample",
+        "noise_consistency",
+        "colour",
         "manipulation_summary",
     }
 
