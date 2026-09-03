@@ -9,22 +9,32 @@ weights from the Hub at runtime instead of bundling them.
 
 They are too large for git and they are derived artifacts, so `outputs/` stays ignored.
 
-    pip install -U huggingface_hub
-    huggingface-cli login          # use a NEW token; the old one is in a chat log
+`huggingface-cli` is REMOVED in huggingface_hub 1.x: it prints a deprecation notice and
+exits without doing anything, so a script using it appears to run and creates nothing. The
+CLI is now `hf`. Do NOT `pip install -U huggingface_hub` either: 1.x breaks transformers
+4.x, which this project pins. The version already in the venv has `hf`.
 
-    huggingface-cli repo create forge-detect-weights --type model --private
-    huggingface-cli upload AKilalours/forge-detect-weights \
+    hf auth login          # a NEW write token; the old one is in a chat log
+
+Create the model repo in the browser at huggingface.co/new, named `forge-detect-weights`,
+visibility private. Creating it there rather than by CLI avoids guessing flag names that
+changed with the CLI, and it is one click.
+
+    hf upload AKilalours/forge-detect-weights \
         outputs/forge_min_baseline/best.pt      forge_min_baseline/best.pt
-    huggingface-cli upload AKilalours/forge-detect-weights \
+    hf upload AKilalours/forge-detect-weights \
         outputs/forge_min_baseline/summary.json forge_min_baseline/summary.json
-    huggingface-cli upload AKilalours/forge-detect-weights \
+    hf upload AKilalours/forge-detect-weights \
         outputs/forge_min_mirror/best.pt        forge_min_mirror/best.pt
-    huggingface-cli upload AKilalours/forge-detect-weights \
+    hf upload AKilalours/forge-detect-weights \
         outputs/forge_min_mirror/summary.json   forge_min_mirror/summary.json
 
 ## 2. Create the Space
 
-    huggingface-cli repo create forge-detect --type space --space_sdk docker
+Create it in the browser at huggingface.co/new-space: name `forge-detect`, SDK **Docker**,
+hardware CPU basic (free). The push in step 3 fails with "Repository not found" until this
+exists, which is the one ordering mistake that costs a confusing error rather than a clear
+one.
 
 ## 3. Push this repository to the Space
 

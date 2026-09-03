@@ -26,7 +26,10 @@ dependencies = [
 # Phase 1: ingestion and cleaning
 data = [
   "datasets>=2.18",
-  "huggingface-hub>=0.22",
+  # Pinned below 1.0 for the same reason transformers is pinned below 5: transformers 4.x
+  # requires huggingface-hub<1.0, and `pip install -U huggingface_hub` cheerfully installs
+  # 1.x and leaves the environment in a state pip itself reports as broken.
+  "huggingface-hub>=0.22,<1.0",
   "fasttext-langdetect>=1.0",
   "ftfy>=6.2",
   "selectolax>=0.3",

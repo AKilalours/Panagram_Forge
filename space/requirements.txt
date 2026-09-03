@@ -15,4 +15,7 @@ torch>=2.2
 # detector unavailable.
 transformers>=4.40,<5
 sentencepiece>=0.2
-huggingface_hub>=0.23
+# Below 1.0: transformers 4.x requires huggingface-hub<1.0, and an unbounded requirement
+# here would let the Space build install 1.x and break the text arms at import time, on a
+# machine nobody is watching.
+huggingface_hub>=0.23,<1.0

@@ -208,3 +208,31 @@ def test_transformers_is_pinned_below_5_in_both_installs():
     space_text = (ROOT / "space" / "requirements.txt").read_text(encoding="utf-8")
     line = [ln for ln in space_text.splitlines() if ln.strip().startswith("transformers")]
     assert line and "<5" in line[0], f"the Space would install transformers 5: {line}"
+
+
+def test_huggingface_hub_is_pinned_below_1_in_both_installs():
+    """THE REGRESSION. `pip install -U huggingface_hub` installed 1.30 and broke the venv.
+
+    transformers 4.x requires huggingface-hub<1.0. Both requirements were written with a
+    lower bound and no ceiling, so the resolver was free to install a major version the
+    pinned transformers cannot use. pip printed the conflict and installed it anyway.
+
+    Locally that is a visible error. In the Space build it would be a container that starts,
+    reports the text arms unavailable, and gives no obvious reason, on a machine nobody is
+    watching.
+    """
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    specs = [
+        spec for group in
+        [data["project"].get("dependencies", [])]
+        + list(data["project"].get("optional-dependencies", {}).values())
+        for spec in group
+        if _normalise(re.split(r"[<>=!~\[;\s]", spec, maxsplit=1)[0]) == "huggingface-hub"
+    ]
+    assert specs, "huggingface-hub is not declared anywhere"
+    for spec in specs:
+        assert "<1" in spec, f"unbounded huggingface-hub requirement: {spec!r}"
+
+    space_text = (ROOT / "space" / "requirements.txt").read_text(encoding="utf-8")
+    line = [ln for ln in space_text.splitlines() if ln.strip().startswith("huggingface_hub")]
+    assert line and "<1.0" in line[0], f"the Space would install huggingface_hub 1.x: {line}"
