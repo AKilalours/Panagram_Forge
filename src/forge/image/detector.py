@@ -74,11 +74,21 @@ class Detection:
     labels: tuple[str, ...] = ()
     polarity_verified: bool = False
 
+    # Fitted on the probe set when one has been measured; the documented defaults otherwise.
+    threshold_ai: float = ABSTAIN_HIGH
+    human_ceiling: float = ABSTAIN_LOW
+
     @property
     def verdict(self) -> str:
-        if self.ai_probability >= ABSTAIN_HIGH:
+        """Three outcomes. The middle one is a refusal to guess, not a weak AI call.
+
+        The AI threshold sits above every human image in the probe set, because being wrong
+        about a person is the expensive error in this project and always has been. Between
+        the two, the detector declines.
+        """
+        if self.ai_probability >= self.threshold_ai:
             return "ai"
-        if self.ai_probability < ABSTAIN_LOW:
+        if self.ai_probability < self.human_ceiling:
             return "human"
         return "uncertain"
 
@@ -165,12 +175,15 @@ class ImageDetector:
         return float(torch.softmax(logits.float(), dim=-1)[0, self.ai_index])
 
     def detect(self, data: bytes) -> Detection:
+        record = self.polarity_record or {}
         return Detection(
             ai_probability=self.probability(data),
             model_id=self.model_id,
             calibrated=False,
             labels=self.labels,
             polarity_verified=self.polarity_verified,
+            threshold_ai=float(record.get("threshold_ai", ABSTAIN_HIGH)),
+            human_ceiling=float(record.get("human_ceiling", ABSTAIN_LOW)),
         )
 
 

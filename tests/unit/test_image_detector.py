@@ -176,3 +176,23 @@ def test_the_visual_stream_never_claims_calibration_it_does_not_have():
     note = next(s for s in streams if s.key == "visual_model").note
     assert "calibrated on validation data" not in note
     assert "uncalibrated" in note
+
+
+def test_the_verdict_uses_a_fitted_threshold_when_one_was_measured():
+    """The default band is a placeholder. A measured operating point replaces it."""
+    fitted = Detection(ai_probability=0.55, model_id="m", threshold_ai=0.42, human_ceiling=0.10)
+    assert fitted.verdict == "ai", "0.55 is above a fitted threshold of 0.42"
+
+    default = Detection(ai_probability=0.55, model_id="m")
+    assert default.verdict == "uncertain", "0.55 sits inside the default band"
+
+
+def test_the_middle_band_declines_rather_than_guessing():
+    d = Detection(ai_probability=0.30, model_id="m", threshold_ai=0.42, human_ceiling=0.10)
+    assert d.verdict == "uncertain"
+
+
+def test_the_threshold_sits_above_the_human_ceiling():
+    """Inverting them would make one of the two verdicts unreachable."""
+    d = Detection(ai_probability=0.0, model_id="m", threshold_ai=0.42, human_ceiling=0.10)
+    assert d.human_ceiling < d.threshold_ai

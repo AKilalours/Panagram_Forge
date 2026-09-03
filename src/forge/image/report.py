@@ -460,8 +460,11 @@ def build_report(
                 available=True,
                 verdict=detection.verdict,
                 confidence=detection.ai_probability,
-                band=f"[{ABSTAIN_LOW}, {ABSTAIN_HIGH})",
-                reason="Uncalibrated score from a baseline detector.",
+                band=f"[{detection.human_ceiling:.3f}, {detection.threshold_ai:.3f})",
+                reason=(
+                    "Baseline detector. Threshold fitted above every human image in a small "
+                    "labelled probe set."
+                ),
             )
             if detection is not None and detection.polarity_verified
             else Assessment(
