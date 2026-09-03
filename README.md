@@ -20,11 +20,11 @@ it. Read `docs/writeup.md` first, then `docs/evaluation.md` for the full tables.
 | 1 | FORGE-HUMAN ingestion (FineWeb, FineWeb-Edu, public domain) | **done**, 60,000 documents, `dataset_version` v0.1-min |
 | 2 | Synthetic mirror engine, FORGE-MIRROR v0.1 | **done**, 30,000 AI documents per arm from four families at 1.7B to 3.8B |
 | 3 | Baseline detector (encoder + document head + token head) | **done**, arms A and B trained, DeBERTa-v3-base, one RTX 4090 |
-| 4 | Hard negative mining loop | mining, atlas, clustering and selection built and tested; **the CLI entrypoint is not yet wired to them, and arm C has not run** |
+| 4 | Hard negative mining loop | mining, atlas, clustering and selection built and tested, `forge mine` wired to them; **arm C has not run**, and it is the arm that tests the thesis |
 | 5 | External evaluation (RAID, MAGE, HC3) | **done**, six cells, paired bootstrap and paired McNemar, score arrays committed |
-| 6 | Adversarial laboratory | 8 offline attacks + lab runner built and tested; **entrypoint not wired**; 4 model-based attacks refuse rather than fake |
+| 6 | Adversarial laboratory | 8 offline attacks + lab runner built and tested, `forge evaluate` wired to them; **arm D has not run**; 4 model-based attacks refuse rather than fake |
 | 7 | Distributed training (FSDP / DeepSpeed / Ray), profiling | scaling math, config generation and the batch-invariant benchmark matrix built and tested; **needs 2 GPUs to measure, no scaling claim is made** |
-| 8 | Production serving, release gate, monitoring, UI | decision policy with abstention, batching, drift, feedback state machine, registry promotion and UI built and tested |
+| 8 | Production serving, release gate, monitoring, UI | decision policy, batching, drift, feedback state machine, registry promotion and UI built and tested; the UI **scores real text on CPU with both arms** and renders forensic residual maps for images. Abstention is off: its band comes from validation scores, which are not committed |
 
 Every number in this repo is either measured and committed with the run that
 produced it, or absent. There are no placeholder metrics in results tables.
