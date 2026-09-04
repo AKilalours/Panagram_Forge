@@ -35,8 +35,18 @@ CSS = r""":root{--bg:#f4f6f8;--panel:#fff;--ink:#11141a;--muted:#68707c;--line:#
 .gauge .needle{position:absolute;top:-4px;width:3px;height:16px;border-radius:2px;
  background:var(--ink);transform:translateX(-50%)}
 .assess.big.pending .needle{background:var(--line)}
+/* THE DECISION BOUNDARY, drawn on the gauge. Without it the bar implies a boundary in the
+   middle, and a document scoring 79.8% against a deployed threshold of 0.992 puts the
+   needle deep in the red beside the words NO AI DETECTED. Both were correct and the pair
+   read as a bug. The tick is where the verdict actually changes. */
+.gauge .bound{position:absolute;top:-3px;width:2px;height:14px;background:var(--ink);
+ opacity:.55;transform:translateX(-50%)}
+.gauge .bound::after{content:'threshold';position:absolute;top:15px;left:50%;
+ transform:translateX(-50%);font-size:9.5px;letter-spacing:.02em;color:var(--muted);
+ white-space:nowrap}
 .gaugeends{display:flex;justify-content:space-between;font-size:10.5px;color:var(--muted);
  margin-top:4px}
+.gauge.hasbound + .gaugeends{margin-top:16px}
 .scorenote{font-size:11.5px;color:var(--muted);margin-top:8px;line-height:1.45;text-align:left}
 .dir{display:block;margin-top:3px;font-size:11px;color:var(--muted);font-style:italic}
 .tbl{width:100%;border-collapse:collapse;margin-top:10px;font-variant-numeric:tabular-nums}

@@ -32,8 +32,15 @@ def esc(value) -> str:
 
 
 def banner(*, available: bool, verdict: str | None, probability: float | None,
-           reason: str = "", score_label: str = "AI probability", score_note: str = "") -> str:
-    """The headline. One shape for text and image, as on the FastAPI page."""
+           reason: str = "", score_label: str = "AI probability", score_note: str = "",
+           threshold: float | None = None) -> str:
+    """The headline. One shape for text and image, as on the FastAPI page.
+
+    `threshold` marks the deployed decision boundary on the gauge. It is not decoration: the
+    text arms decide at 0.992, so a document scoring 79.8% is a HUMAN verdict with the
+    needle three quarters of the way toward the red end. Drawn without the boundary, the
+    gauge and the headline contradict each other and the honest answer looks like a bug.
+    """
     has_score = probability is not None
     pct = None if (not available or not has_score) else probability * 100
     cls = "pending" if not available else VERDICT_CLASS.get(verdict or "", "warn")
@@ -42,8 +49,14 @@ def banner(*, available: bool, verdict: str | None, probability: float | None,
     gauge = ""
     if pct is not None:
         position = min(100.0, max(0.0, pct))
+        bound = ""
+        klass = "gauge"
+        if threshold is not None and 0.0 < threshold < 1.0:
+            klass = "gauge hasbound"
+            bound = f'<div class="bound" style="left:{min(100.0, threshold * 100):.4f}%"></div>'
         gauge = (
-            f'<div class="gauge"><div class="needle" style="left:{position}%"></div></div>'
+            f'<div class="{klass}"><div class="needle" style="left:{position}%"></div>'
+            f'{bound}</div>'
             '<div class="gaugeends"><span>human</span><span>uncertain</span><span>AI</span></div>'
         )
     score_text = ("not available" if not available else "declared") if pct is None else f"{pct:.1f}%"
@@ -212,6 +225,21 @@ def _details_card(payload: dict) -> str:
     )
 
 
+def _image_threshold(assessment: dict) -> float | None:
+    """The AI boundary, parsed from the band the assessment reports.
+
+    `band` is "[low, high)": below low is not AI, at or above high is AI. The gauge marks
+    the AI end, because that is where the verdict flips to ai.
+    """
+    band = assessment.get("band")
+    if not band:
+        return None
+    try:
+        return float(band.strip("[)").split(",")[1])
+    except (IndexError, ValueError):
+        return None
+
+
 def image_result(payload: dict) -> str:
     """The image tab, section for section as the FastAPI page renders it.
 
@@ -233,6 +261,7 @@ def image_result(payload: dict) -> str:
         reason=assessment.get("reason", ""),
         score_label="Determination" if assessment.get("confidence") is None else "AI probability",
         score_note=assessment.get("detail", ""),
+        threshold=_image_threshold(assessment),
     )
 
     preview = (f'<img class="prev" src="{payload["preview"]}" alt="preview">'
@@ -346,6 +375,7 @@ def text_result(payload: dict) -> str:
         reason=f'{opening} Mean over {primary["n_windows"]} window{plural}, '
                f'{payload["words"]} words.',
         score_label="AI probability, calibrated",
+        threshold=primary["threshold"],
         score_note=(
             f'{primary["label"]}, threshold {primary["threshold"]:.6f} at a '
             f'{primary["fpr_budget"]} false-positive budget. Validation ECE '

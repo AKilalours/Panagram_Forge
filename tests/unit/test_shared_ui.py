@@ -269,3 +269,45 @@ def test_sections_that_have_no_data_are_absent_rather_than_empty():
     assert "What the verdict rests on" not in html
     assert "Pixel statistics" not in html
     assert "Details" in html, "the details panel does not depend on the optional sections"
+
+
+# ------------------------------------------------------- the gauge and the decision boundary
+
+def test_the_gauge_marks_the_threshold_the_verdict_actually_uses():
+    """THE REGRESSION. A 79.8% score with a NO AI DETECTED headline looked like a bug.
+
+    Both were correct: the deployed threshold is 0.992285, so 79.8% is a human verdict. But
+    a gauge with no boundary drawn implies the boundary is in the middle, so the needle sat
+    three quarters of the way toward the red end beside the words NO AI DETECTED. A reader
+    resolves that contradiction by deciding the page is broken, which is the one conclusion
+    the project can least afford.
+    """
+    html = text_result(_text_payload())
+    assert "hasbound" in html, "the gauge no longer marks the decision boundary"
+    assert 'class="bound"' in html
+    assert "99.2285%" in html, "the tick is not at the deployed threshold"
+
+
+def test_a_high_score_below_the_threshold_still_reads_as_no_ai():
+    """The verdict follows the threshold, never the visual position of the needle."""
+    arm = _arm("mirror", "B: matched mirrors", verdict="human", probability=0.798)
+    html = text_result(_text_payload(arms=[arm]))
+    headline = html[html.index("<h2>"):html.index("</h2>")]
+    assert "NO AI DETECTED" in headline
+    assert "79.8%" in html
+    assert "hasbound" in html, "this is exactly the case that needs the boundary drawn"
+
+
+def test_no_boundary_is_drawn_when_there_is_no_threshold_to_draw():
+    """An unmarked gauge beats a tick at an invented position."""
+    html = banner(available=True, verdict="human", probability=0.01, threshold=None)
+    assert "hasbound" not in html and 'class="bound"' not in html
+
+
+def test_the_image_boundary_comes_from_the_band_the_assessment_reports():
+    """Parsed, not guessed. The band is "[not-AI ceiling, confident-AI floor)"."""
+    from forge.ui.render import _image_threshold
+
+    assert _image_threshold({"band": "[0.312, 0.437)"}) == 0.437
+    assert _image_threshold({"band": None}) is None
+    assert _image_threshold({"band": "nonsense"}) is None
