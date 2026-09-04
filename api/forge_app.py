@@ -127,6 +127,10 @@ async def analyze_image(
     return JSONResponse(payload)
 
 
+class TextRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_TEXT_CHARS)
+
+
 @app.post("/v1/text/analyze")
 def analyze_text(req: TextRequest) -> JSONResponse:
     """Score with both arms. The work lives in forge.inference.text_api.
@@ -138,6 +142,7 @@ def analyze_text(req: TextRequest) -> JSONResponse:
     from forge.inference.text_api import analyse
 
     return JSONResponse(analyse(req.text))
+
 
 @app.get("/v1/results")
 def results() -> JSONResponse:

@@ -31,7 +31,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from api.forge_app import MAX_IMAGE_BYTES, app  # noqa: E402
+from api.forge_app import MAX_IMAGE_BYTES, MAX_TEXT_CHARS, app  # noqa: E402
 
 client = TestClient(app)
 
@@ -305,3 +305,25 @@ def test_the_app_exposes_every_route_the_page_calls() -> None:
     for required in ("/", "/health", "/v1/image/analyze", "/v1/text/analyze",
                      "/v1/image/detector", "/v1/text/arms", "/v1/results"):
         assert required in paths, f"{required} is no longer served"
+
+
+def test_the_text_route_still_takes_a_json_body_and_enforces_its_limits() -> None:
+    """THE REGRESSION. `class TextRequest` was deleted while moving code out of this module.
+
+    It did not raise. `from __future__ import annotations` makes every annotation a string,
+    so `req: TextRequest` never resolved at import time, the route registered anyway, and
+    every request came back 422 with an empty payload. The failure surfaced two layers away
+    as "no arms were scored", which points at the scorer rather than at a missing model.
+
+    Asserting that a well-formed request returns 200 with a real payload, and that a
+    malformed one is rejected, catches a deleted or renamed request model directly.
+    """
+    ok = client.post("/v1/text/analyze", json={"text": "a sentence to analyse"})
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert "arms" in body and "unavailable" in body and "words" in body
+
+    assert client.post("/v1/text/analyze", json={"text": ""}).status_code == 422
+    assert client.post("/v1/text/analyze", json={}).status_code == 422
+    assert client.post("/v1/text/analyze",
+                       json={"text": "x" * (MAX_TEXT_CHARS + 1)}).status_code == 422
