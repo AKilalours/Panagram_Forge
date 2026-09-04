@@ -1,0 +1,23 @@
+# STREAMLIT COMMUNITY CLOUD reads this file, at the repository root, and nothing else.
+# It mirrors space/requirements.txt with streamlit added; a test asserts the two agree on
+# every shared package, so a pin fixed in one place cannot rot in the other.
+streamlit>=1.36
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
+pydantic>=2.6
+pillow>=10.2
+numpy>=1.26
+pyyaml>=6.0
+# CPU wheels. The default index pulls the CUDA build, which is several gigabytes and
+# useless here, and on a 2.7 GB tier it does not even install.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch>=2.2
+# Below 5 and paired with sentencepiece: the DeBERTa-v3 tokenizer is a SentencePiece model
+# and transformers 5 changes how it is built. Without this pair the app starts and the text
+# tab is dead.
+transformers>=4.40,<5
+sentencepiece>=0.2
+# Below 1.0: transformers 4.x requires it, and an unbounded pin here lets the build install
+# a major version the app cannot use.
+huggingface_hub>=0.23,<1.0

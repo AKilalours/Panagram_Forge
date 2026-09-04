@@ -1,0 +1,8 @@
+[server]
+# Uploads are held in memory and analysed there. 25 MB is generous for a photograph and
+# small enough that a large file cannot exhaust a 2.7 GB container.
+maxUploadSize = 25
+
+[theme]
+base = "dark"
+primaryColor = "#4c8dff"

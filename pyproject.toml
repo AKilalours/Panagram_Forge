@@ -99,6 +99,12 @@ orchestration = [
   "apache-airflow>=2.9",
   "pyspark>=3.5",
 ]
+# The Streamlit deployment. Streamlit Community Cloud is the only free host that runs a
+# torch app without a payment card, so streamlit_app.py is the deployed interface and
+# api/forge_app.py stays the reference one.
+demo = [
+  "streamlit>=1.36",
+]
 dev = [
   "pytest>=8.1",
   "pytest-cov>=5.0",

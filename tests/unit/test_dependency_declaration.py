@@ -236,3 +236,52 @@ def test_huggingface_hub_is_pinned_below_1_in_both_installs():
     space_text = (ROOT / "space" / "requirements.txt").read_text(encoding="utf-8")
     line = [ln for ln in space_text.splitlines() if ln.strip().startswith("huggingface_hub")]
     assert line and "<1.0" in line[0], f"the Space would install huggingface_hub 1.x: {line}"
+
+
+# ------------------------------------------------------- the two deployment requirement files
+
+def test_the_streamlit_requirements_agree_with_the_space_requirements():
+    """Two deployment files, one set of pins. They must not drift.
+
+    Streamlit Community Cloud reads requirements.txt at the repository root and nothing
+    else, so the pins that keep the text arm alive (transformers below 5, sentencepiece,
+    huggingface_hub below 1) have to be repeated there. A repeated pin is a pin that rots:
+    this project has already shipped python-multipart in one file and not the other, and a
+    dead text tab is exactly what that produces.
+
+    Shared packages must carry identical specifiers. Either file may add packages the other
+    does not need, which is how streamlit and onnxruntime differ legitimately.
+    """
+    def specs(text: str) -> dict[str, str]:
+        out = {}
+        for raw in text.splitlines():
+            line = raw.split("#", 1)[0].strip()
+            if not line or line.startswith("-"):
+                continue
+            name = re.split(r"[<>=!~\[;\s]", line, maxsplit=1)[0]
+            out[_normalise(name)] = line[len(name):].strip()
+        return out
+
+    root = specs((ROOT / "requirements.txt").read_text(encoding="utf-8"))
+    space = specs((ROOT / "space" / "requirements.txt").read_text(encoding="utf-8"))
+
+    disagreements = {
+        name: (root[name], space[name])
+        for name in set(root) & set(space)
+        if root[name] != space[name]
+    }
+    assert not disagreements, (
+        "requirements.txt and space/requirements.txt disagree on shared packages: "
+        f"{disagreements}"
+    )
+    for required in ("torch", "transformers", "sentencepiece", "huggingface-hub", "pillow"):
+        assert required in root, f"{required} missing from the Streamlit requirements"
+    assert "streamlit" in root, "the Streamlit deployment cannot run without streamlit"
+
+
+def test_the_streamlit_app_declares_the_same_ceilings():
+    """The pins that matter are the upper bounds, so assert them by name in the root file."""
+    text = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    lines = {ln.split("#")[0].strip() for ln in text.splitlines()}
+    assert any(ln.startswith("transformers") and "<5" in ln for ln in lines)
+    assert any(ln.startswith("huggingface_hub") and "<1.0" in ln for ln in lines)
