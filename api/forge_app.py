@@ -66,6 +66,8 @@ MAX_TEXT_CHARS = 50_000
 # page's copy names the formats and the tests import them from this module.
 from forge.image.analysis import ACCEPTED, NEEDS_DECODER  # noqa: E402,F401
 
+app = FastAPI(title="FORGE", version="0.2.0")
+
 
 @app.get("/health")
 def health() -> dict:

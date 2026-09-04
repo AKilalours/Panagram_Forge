@@ -287,3 +287,21 @@ def test_a_png_is_accepted() -> None:
         "/v1/image/analyze", files={"file": ("a.png", _photo("PNG"), "image/png")}
     )
     assert response.status_code == 200
+
+
+def test_the_app_exposes_every_route_the_page_calls() -> None:
+    """THE REGRESSION. `app = FastAPI(...)` was deleted by an edit that moved code out.
+
+    Extracting the image analysis into forge.image.analysis meant cutting a block out of
+    this module, and the cut took the application object with it. The module then failed to
+    import at all, which pytest reports as a COLLECTION ERROR rather than a failure, and a
+    collection error is the easiest thing in a test run to scroll past.
+
+    Asserting the route table rather than just the import also catches the subtler version:
+    a route that survives the file but no longer answers, because its decorator went with
+    the block that moved.
+    """
+    paths = {getattr(route, "path", None) for route in app.routes}
+    for required in ("/", "/health", "/v1/image/analyze", "/v1/text/analyze",
+                     "/v1/image/detector", "/v1/text/arms", "/v1/results"):
+        assert required in paths, f"{required} is no longer served"
