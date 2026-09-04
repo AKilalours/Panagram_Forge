@@ -1,6 +1,6 @@
 {
   "comparison": "tier1_arm_a_vs_arm_b",
-  "code_commit": "4ec8204c70e7b519f782f0a105dcf5b45c026e7c",
+  "code_commit": "d090c9b1d3b03d70f74ffc5a5323bf2809a4126d",
   "dataset_version": "v0.1-min",
   "equal_budget": {
     "ai_cap": 20000,
