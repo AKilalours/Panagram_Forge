@@ -21,7 +21,6 @@ in docs/evaluation.md, where it belongs; a live page is not the place that findi
 
 from __future__ import annotations
 
-import gc
 import io
 import os
 import pathlib
@@ -34,7 +33,6 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 WEIGHTS_REPO = os.getenv("FORGE_WEIGHTS_REPO", "Akilalourdes/forge-detect-weights")
 EXPERIMENT = {"baseline": "forge_min_baseline", "mirror": "forge_min_mirror"}
-ARM_TITLE = {"mirror": "Arm B, matched mirrors", "baseline": "Arm A, random synthetic"}
 
 st.set_page_config(page_title="FORGE Detect", page_icon="◈", layout="wide")
 
@@ -66,26 +64,6 @@ def ensure_weights(arm: str) -> str | None:
     return None
 
 
-def load_single_arm(arm: str):
-    """Load one arm and evict any other. Returns (arm_object, error_string)."""
-    from forge.inference.scorer import ArmUnavailable, load_arm
-
-    if st.session_state.get("resident_arm") not in (None, arm):
-        load_arm.cache_clear()
-        gc.collect()
-    failure = ensure_weights(arm)
-    if failure:
-        return None, f"could not fetch the {arm} checkpoint: {failure}"
-    try:
-        loaded = load_arm(arm)
-    except ArmUnavailable as error:
-        return None, str(error)
-    except Exception as error:  # noqa: BLE001
-        return None, f"{type(error).__name__}: {error}"
-    st.session_state["resident_arm"] = arm
-    return loaded, None
-
-
 # ------------------------------------------------------------------------- presentation
 
 # THE SAME CARDS AS THE FASTAPI PAGE. `forge.ui.render` builds the identical markup against
@@ -105,64 +83,35 @@ def show(body: str, height: int) -> None:
 # ------------------------------------------------------------------------------ text tab
 
 def text_tab() -> None:
-    st.subheader("Text")
-    choice = st.radio(
-        "Detector arm",
-        ["mirror", "baseline"],
-        format_func=lambda a: ARM_TITLE[a],
-        horizontal=True,
-        help="One arm is held in memory at a time on this tier; switching reloads.",
-    )
     text = st.text_area(
         "Paste text to analyse",
-        height=240,
-        placeholder="A few paragraphs works best. Very short passages carry little signal.",
+        height=300,
+        label_visibility="collapsed",
+        placeholder="Paste text to analyse. A few paragraphs works best; very short "
+                    "passages carry little signal.",
     )
-
     if not st.button("Analyse text", type="primary"):
         return
     if not text.strip():
-        st.warning("Paste some text first.")
+        st.error("Paste some text first.")
         return
 
-    with st.spinner(f"Loading {ARM_TITLE[choice]} and scoring. First load fetches 735 MB."):
-        arm, failure = load_single_arm(choice)
-    if failure:
-        st.error(failure)
-        st.caption("No score is shown when an arm cannot load. A number here would be invented.")
-        return
-
-    from forge.inference.decision import decide
+    from forge.inference.text_api import analyse
     from forge.ui.render import text_result
 
-    scored = arm.score(text)
-    decision = decide(scored.mean, arm.policy)
+    # BOTH ARMS, as on the reference page, because the comparison is the experiment. Each is
+    # roughly 740 MB in float32 and this host allows about 2.7 GB, so the second one may not
+    # fit. analyse() reports that per arm rather than failing the request, and the page then
+    # shows the arm it has and says only one is loaded. Fetching is per arm and cached, so
+    # the first analysis pays for the download and later ones do not.
+    with st.spinner("Loading the arms and scoring. The first run fetches 1.5 GB of weights."):
+        for arm in ("mirror", "baseline"):
+            failure = ensure_weights(arm)
+            if failure:
+                st.warning(f"could not fetch the {arm} checkpoint: {failure}")
+        payload = analyse(text)
 
-    show(
-        text_result(
-            arm_label=ARM_TITLE[choice],
-            verdict=decision.verdict.value,
-            probability=scored.mean,
-            threshold=arm.policy.threshold,
-            fpr_budget=arm.policy.fpr_budget,
-            words=len(text.split()),
-            windows=scored.n_windows,
-            maximum=scored.maximum,
-            model_version=arm.policy.model_version,
-            val_fnr=arm.summary["val"].get("fnr"),
-            val_ece=arm.summary["val"].get("ece"),
-        ),
-        height=560,
-    )
-
-    st.info(
-        "**These arms are in-distribution detectors.** On generators they never saw, the "
-        "committed evaluation measures a 63% to 96% miss rate and calibration collapsing "
-        "from ECE 0.004 to between 0.18 and 0.44. Text from ChatGPT, Claude or Gemini will "
-        "usually read as no AI detected. That is the published result, not a malfunction: "
-        "see docs/evaluation.md.",
-        icon="⚠",
-    )
+    show(text_result(payload), height=1180)
 
 
 # ----------------------------------------------------------------------------- image tab

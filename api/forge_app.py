@@ -193,71 +193,15 @@ class TextRequest(BaseModel):
 
 @app.post("/v1/text/analyze")
 def analyze_text(req: TextRequest) -> JSONResponse:
-    """Score with BOTH arms and show them side by side.
+    """Score with both arms. The work lives in forge.inference.text_api.
 
-    The decision policy is not reimplemented here. Thresholds come from each arm's committed
-    summary.json and the verdict comes from forge.inference.decision.decide, so there is one
-    place where a score becomes a claim.
-
-    Both arms rather than one, because the comparison IS the project. A single verdict would
-    hide the thing the experiment measured, and the two arms genuinely disagree on documents
-    near the threshold: on RAID, 122 documents that arm A misses arm B catches.
-
-    An arm that cannot load reports why. It never falls back to a score.
+    It moved there when the Streamlit deployment needed the same result in-process rather
+    than over HTTP. Two copies of the scoring loop would put the two pages one edit apart
+    from disagreeing about what a verdict is.
     """
-    from forge.inference.decision import decide
-    from forge.inference.scorer import ARMS, ArmUnavailable, load_arm
+    from forge.inference.text_api import analyse
 
-    words = len(req.text.split())
-    arms, unavailable = [], {}
-    for name in ARMS:
-        try:
-            arm = load_arm(name)
-            scored = arm.score(req.text)
-        except ArmUnavailable as error:
-            unavailable[name] = str(error)
-            continue
-        except Exception as error:                      # noqa: BLE001 - surfaced, not hidden
-            unavailable[name] = f"{type(error).__name__}: {error}"
-            continue
-
-        decision = decide(scored.mean, arm.policy)
-        arms.append({
-            "arm": scored.arm,
-            "label": scored.label,
-            "verdict": decision.verdict.value,
-            "ai_probability": scored.mean,
-            "max_window_probability": scored.maximum,
-            "confidence": decision.confidence,
-            "threshold": arm.policy.threshold,
-            "fpr_budget": arm.policy.fpr_budget,
-            "model_version": arm.policy.model_version,
-            "abstained": decision.abstained,
-            "n_windows": scored.n_windows,
-            "windows": scored.window_probabilities[:64],
-            "val_fnr": arm.summary["val"].get("fnr"),
-            "val_ece": arm.summary["val"].get("ece"),
-        })
-
-    return JSONResponse({
-        "available": bool(arms),
-        "words": words,
-        "arms": arms,
-        "unavailable": unavailable,
-        "aggregation": "mean over windows; max shown alongside because it inflates FPR",
-        "caveat": (
-            "Trained on four generator families at 1.7B to 3.8B parameters. Against unseen "
-            "generators these checkpoints miss 63% to 96% of AI text at this threshold and "
-            "their ECE rises from 0.004 to 0.18-0.44. A confident score here is not evidence "
-            "of a confident model. See docs/evaluation.md."
-        ),
-        "abstention": (
-            "Off. The uncertain band is derived from validation scores "
-            "(decision.band_from_validation), which are not committed, and a band chosen by "
-            "eye would silently change the false-positive rate."
-        ),
-    })
-
+    return JSONResponse(analyse(req.text))
 
 @app.get("/v1/results")
 def results() -> JSONResponse:

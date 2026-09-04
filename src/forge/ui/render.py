@@ -170,39 +170,93 @@ def image_result(payload: dict, attribution: dict | None = None) -> str:
     return head + cards + attribution_card + details + limits_card
 
 
-def text_result(*, arm_label: str, verdict: str, probability: float, threshold: float,
-                fpr_budget: float, words: int, windows: int, maximum: float,
-                model_version: str, val_fnr, val_ece) -> str:
-    """The text tab's cards. The same banner, then what the score was made of."""
+def _spark(windows: list[float]) -> str:
+    """Per-window probabilities as bars. Omitted for a single window, where it says nothing."""
+    if len(windows) < 2:
+        return ""
+    bars = "".join(f'<i style="height:{max(2, round(p * 100))}%"></i>' for p in windows)
+    return f'<div class="spark">{bars}</div>'
+
+
+def _arm_card(arm: dict) -> str:
+    tone = {"ai": "hot", "human": "ok"}.get(arm["verdict"], "warn")
+    return (
+        f'<div class="card"><h3>{esc(arm["label"])}</h3>'
+        + _row("Verdict", arm["verdict"], tone)
+        + _row("AI probability (mean over windows)", f'{arm["ai_probability"] * 100:.2f}%')
+        + _row("Highest single window", f'{arm["max_window_probability"] * 100:.2f}%')
+        + _row("Deployed threshold", f'{arm["threshold"]:.6f}')
+        + _row("FPR budget", arm["fpr_budget"])
+        + _row("Distance from threshold", f'{arm["confidence"] * 100:.1f}%')
+        + _row("Windows scored", arm["n_windows"])
+        + _row("Its validation FNR", f'{arm["val_fnr"] * 100:.3f}%')
+        + _row("Its validation ECE", arm["val_ece"])
+        + _spark(arm.get("windows") or [])
+        + "</div>"
+    )
+
+
+def text_result(payload: dict) -> str:
+    """The text tab, from the payload `forge.inference.text_api.analyse` returns.
+
+    Deliberately the same structure as the FastAPI page's JavaScript, because it is the same
+    page: one banner carrying the deployed arm's verdict, both arms side by side beneath it
+    because the comparison is the experiment, and the limitations card last. A product has
+    one verdict, not two, so the headline is the mirror arm and the other sits beside it.
+    """
+    unavailable = "".join(
+        f'<div class="card err"><h3>{esc(name)} unavailable</h3><p>{esc(reason)}</p></div>'
+        for name, reason in (payload.get("unavailable") or {}).items()
+    )
+
+    if not payload.get("available"):
+        head = banner(
+            available=False, verdict=None, probability=None,
+            reason="Neither arm could be loaded, so no score is produced. A number here "
+                   "would be fabricated.",
+            score_label="AI probability, calibrated",
+            score_note="Load a trained checkpoint into outputs/ to enable scoring.",
+        )
+        return head + (f'<div class="grid">{unavailable}'
+                       f'<div class="card"><h3>Input</h3>'
+                       f'{_row("Words", payload.get("words"))}</div></div>')
+
+    arms = payload["arms"]
+    primary = next((a for a in arms if a["arm"] == "mirror"), arms[0])
+    if len(arms) > 1:
+        agree = arms[0]["verdict"] == arms[1]["verdict"]
+        opening = ("Both arms agree." if agree else
+                   "THE ARMS DISAGREE: "
+                   + ", ".join(f'{a["label"]} says {a["verdict"]}' for a in arms) + ".")
+    else:
+        opening = "Only one arm is loaded."
+
+    plural = "" if primary["n_windows"] == 1 else "s"
     head = banner(
         available=True,
-        verdict=verdict,
-        probability=probability,
-        reason=f"{arm_label} · threshold {threshold:.4f} at a {fpr_budget:.1%} false-positive budget",
-        score_label="AI probability",
+        verdict=primary["verdict"],
+        probability=primary["ai_probability"],
+        reason=f'{opening} Mean over {primary["n_windows"]} window{plural}, '
+               f'{payload["words"]} words.',
+        score_label="AI probability, calibrated",
+        score_note=(
+            f'{primary["label"]}, threshold {primary["threshold"]:.6f} at a '
+            f'{primary["fpr_budget"]} false-positive budget. Validation ECE '
+            f'{primary["val_ece"]}. Out of distribution this model is badly miscalibrated: '
+            "see the note below."
+        ),
     )
-    scoring = (
-        '<div class="card"><h3>How the document was scored</h3>'
-        + _row("Words", words)
-        + _row("Windows", windows)
-        + _row("Mean window probability", f"{probability:.4f}")
-        + _row("Highest single window", f"{maximum:.4f}")
-        + ('<p class="caveat">The document is scored in overlapping windows and the mean is '
-           'the document score. The highest single window is shown because a short generated '
-           'passage inside a long human document moves it and not the mean.</p>'
-           if windows > 1 else "")
-        + "</div>"
+
+    provenance = " · ".join(esc(a["model_version"]) for a in arms)
+    limits = (
+        '<div class="card wide"><h3>What this score is not</h3>'
+        f'<p>{esc(payload["caveat"])}</p><p>{esc(payload["abstention"])}</p>'
+        '<p class="tech" style="margin-top:9px">Provenance, for reproducibility rather than '
+        f'display: {provenance}</p></div>'
     )
-    policy = (
-        '<div class="card"><h3>The threshold this verdict used</h3>'
-        + _row("Threshold", f"{threshold:.6f}")
-        + _row("Fitted at FPR budget", f"{fpr_budget:.1%}")
-        + _row("Validation FNR", val_fnr)
-        + _row("Validation ECE", val_ece)
-        + _row("Model version", model_version)
-        + "</div>"
-    )
-    return head + f'<div class="grid">{scoring}{policy}</div>'
+
+    cards = "".join(_arm_card(a) for a in arms)
+    return head + f'<div class="grid">{cards}{unavailable}{limits}</div>'
 
 
 EXTRA_CSS = """

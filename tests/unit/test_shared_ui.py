@@ -112,13 +112,73 @@ def test_the_attribution_panel_is_absent_rather_than_empty_without_a_detector():
     )
 
 
-def test_the_text_card_reports_the_threshold_the_verdict_used():
-    """A verdict without its operating point cannot be checked by the reader."""
-    html = text_result(
-        arm_label="Arm B, matched mirrors", verdict="ai", probability=0.98, threshold=0.3125,
-        fpr_budget=0.001, words=300, windows=3, maximum=0.99, model_version="x@abc1234",
-        val_fnr=0.0043, val_ece=0.004,
-    )
-    assert "AI DETECTED" in html
-    assert "0.312500" in html and "0.1%" in html
-    assert "x@abc1234" in html
+def _arm(name: str, label: str, verdict: str = "human", probability: float = 0.0001) -> dict:
+    return {"arm": name, "label": label, "verdict": verdict, "ai_probability": probability,
+            "max_window_probability": probability, "confidence": 1.0, "threshold": 0.992285,
+            "fpr_budget": 0.001, "model_version": f"forge_min_{name}@4ec8204c",
+            "abstained": False, "n_windows": 1, "windows": [probability],
+            "val_fnr": 0.0043, "val_ece": 0.003713}
+
+
+def _text_payload(**overrides) -> dict:
+    base = {
+        "available": True, "words": 211,
+        "arms": [_arm("baseline", "A: random synthetic"), _arm("mirror", "B: matched mirrors")],
+        "unavailable": {}, "caveat": "Trained on four generator families at 1.7B to 3.8B.",
+        "abstention": "Off. The uncertain band is derived from validation scores.",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_the_text_page_shows_both_arms_side_by_side():
+    """The comparison IS the experiment. A single-arm page is a different product.
+
+    An earlier draft of the Streamlit page showed one arm with a selector, to fit a 2.7 GB
+    host. That silently dropped the finding the whole project exists to report.
+    """
+    html = text_result(_text_payload())
+    assert "A: random synthetic" in html and "B: matched mirrors" in html
+    assert "Both arms agree." in html
+    assert "Mean over 1 window, 211 words." in html
+    for label in ("Deployed threshold", "FPR budget", "Distance from threshold",
+                  "Windows scored", "Its validation FNR", "Its validation ECE"):
+        assert label in html, f"the arm card lost its {label!r} row"
+    assert "What this score is not" in html and "Provenance" in html
+
+
+def test_the_headline_is_the_mirror_arm_not_whichever_loaded_first():
+    """A product has one verdict. The deployed arm is the headline; the other sits beside it."""
+    arms = [_arm("baseline", "A", verdict="ai", probability=0.99),
+            _arm("mirror", "B", verdict="human", probability=0.01)]
+    html = text_result(_text_payload(arms=arms))
+    headline = html[html.index("<h2>"):html.index("</h2>")]
+    assert "NO AI DETECTED" in headline, "the banner followed arm A instead of the mirror arm"
+
+
+def test_disagreement_is_stated_rather_than_averaged_away():
+    """Two arms that disagree is a finding, not a presentation problem to smooth over."""
+    arms = [_arm("baseline", "A: random synthetic", verdict="ai", probability=0.99),
+            _arm("mirror", "B: matched mirrors", verdict="human", probability=0.01)]
+    html = text_result(_text_payload(arms=arms))
+    assert "THE ARMS DISAGREE" in html
+    assert "Both arms agree" not in html
+
+
+def test_one_arm_loaded_says_so_and_still_reports_the_other_as_unavailable():
+    """On a small host the second arm may not fit. Saying so beats comparing an arm to itself."""
+    html = text_result(_text_payload(
+        arms=[_arm("mirror", "B: matched mirrors")],
+        unavailable={"baseline": "not enough memory to hold a second arm"},
+    ))
+    assert "Only one arm is loaded." in html
+    assert "baseline unavailable" in html
+    assert "not enough memory" in html
+
+
+def test_no_arm_loaded_produces_no_number_at_all():
+    html = text_result(_text_payload(available=False, arms=[],
+                                     unavailable={"mirror": "no checkpoint"}))
+    assert "No verdict" in html
+    assert "would be fabricated" in html
+    assert "%" not in html.split("scorenote")[0].split("score ")[-1][:40]
