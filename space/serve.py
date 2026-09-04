@@ -22,9 +22,21 @@ WANTED = ("best.pt", "summary.json")
 OUT = pathlib.Path("outputs")
 
 
+def _already_present() -> bool:
+    return all((OUT / arm / name).exists() for arm in ARMS for name in WANTED)
+
+
 def fetch() -> None:
+    # The Cloud Run image bakes the checkpoints in at build time, so on that deployment
+    # there is nothing to fetch and FORGE_WEIGHTS_REPO is deliberately unset. Saying
+    # "starting without text checkpoints" there would be false, and it is the exact
+    # sentence someone would read while debugging a text tab that in fact works.
+    if _already_present():
+        print("checkpoints already present; no download needed", flush=True)
+        return
     if not REPO:
-        print("FORGE_WEIGHTS_REPO is not set; starting without text checkpoints", flush=True)
+        print("FORGE_WEIGHTS_REPO is not set and no local checkpoints found; "
+              "the text tab will report why", flush=True)
         return
     from huggingface_hub import hf_hub_download
 

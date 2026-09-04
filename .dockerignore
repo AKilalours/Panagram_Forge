@@ -1,0 +1,21 @@
+# THE BUILD CONTEXT IS UPLOADED TO CLOUD BUILD. Everything listed here would otherwise be
+# sent over the network on every deploy, and `outputs/` alone is 1.5 GB of checkpoints that
+# the image downloads from the Hub anyway. A context that large turns a two-minute deploy
+# into a twenty-minute one and can exhaust the build machine's disk.
+.git
+.venv
+venv
+outputs
+data
+demo
+notebooks
+benchmarks
+kernels
+orchestration
+infra
+forge_src.tgz
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.DS_Store
+.claude
