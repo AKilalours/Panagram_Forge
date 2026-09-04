@@ -259,6 +259,10 @@ def test_conflict_is_low_when_nothing_disagrees() -> None:
 def test_the_report_lists_what_it_cannot_conclude() -> None:
     lines = " ".join(_post(_photo()).json()["cannot_conclude"]).lower()
     assert "whether this image was generated" in lines
+    # THE REGRESSION. This section printed "the trained detector, which does not exist yet"
+    # directly under a verdict the detector had just produced. The honest limitation depends
+    # on whether one ran, so the sentence has to depend on it too.
+    assert "does not exist yet" not in lines
     assert "screenshots" in lines
 
 

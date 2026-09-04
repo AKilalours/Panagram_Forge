@@ -322,10 +322,29 @@ def _stability_rows(data: bytes) -> tuple[list[Row], bool]:
     return rows, True
 
 
-def _cannot_conclude(findings: list[Finding], stability: list[Row]) -> list[str]:
+def _cannot_conclude(findings: list[Finding], stability: list[Row], detection=None) -> list[str]:
+    """What this page does NOT establish, stated next to what it does.
+
+    THE REGRESSION. The first line was fixed text saying the trained detector "does not
+    exist yet", and it kept printing directly underneath a verdict the detector had just
+    produced: 0.9% AI, no AI detected, and then a sentence denying the detector exists. The
+    section is the honest part of the page, which makes a false line in it worse here than
+    almost anywhere else.
+
+    The honest sentence depends on whether a verified detector ran, so the list now depends
+    on it too. With one, the limitation is real and specific: a measured baseline at 55%
+    recall, in sample, is not a trained FORGE image model. Without one, nothing on the page
+    speaks to generation at all.
+    """
+    verified = detection is not None and getattr(detection, "polarity_verified", False)
     lines = [
-        "Whether this image was generated. That needs the trained detector, which does not "
-        "exist yet. Nothing on this page is a substitute for it.",
+        "Whether this image was generated, with confidence. The visual detector is a "
+        "measured baseline, not a trained FORGE model: its operating point was fitted on a "
+        "small labelled set and its recall there was 55%, so a low score is weak evidence "
+        "of a photograph rather than proof of one."
+        if verified else
+        "Whether this image was generated. No verified visual detector is loaded, and "
+        "nothing else on this page is a substitute for one.",
     ]
     exif = _get(findings, "exif")
     if exif and exif.status != PRESENT:
@@ -561,7 +580,7 @@ def build_report(
         stability_available=stability_available,
         preview=preview,
         elapsed_ms=int((time.perf_counter() - started) * 1000),
-        cannot_conclude=_cannot_conclude(findings, stability),
+        cannot_conclude=_cannot_conclude(findings, stability, detection),
         timings_ms=timings,
         detector=detector_info,
         robustness=robustness,

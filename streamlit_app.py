@@ -88,29 +88,18 @@ def load_single_arm(arm: str):
 
 # ------------------------------------------------------------------------- presentation
 
-VERDICT_WORD = {"ai": "AI DETECTED", "human": "NO AI DETECTED", "uncertain": "UNCERTAIN"}
+# THE SAME CARDS AS THE FASTAPI PAGE. `forge.ui.render` builds the identical markup against
+# the identical stylesheet in `forge.ui.theme`, which api/forge_app.py also imports. The two
+# shells differ only in what collects the input: a browser fetch there, a Streamlit widget
+# here. Rendering the results twice from two hand-written templates is exactly how this
+# project has produced pages that disagree with themselves, so there is one template.
+import streamlit.components.v1 as components  # noqa: E402
 
 
-def verdict_banner(verdict: str, probability: float | None, caption: str = "") -> None:
-    """NO AI DETECTED, never HUMAN.
+def show(body: str, height: int) -> None:
+    from forge.ui.render import document
 
-    A detector cannot establish that a person wrote something. It reports whether the input
-    resembles the AI distribution it was trained on. "Human" is a claim about the world;
-    "no AI detected" is a claim about the model, and only the second one is true.
-    """
-    word = VERDICT_WORD.get(verdict, verdict.upper())
-    left, right = st.columns([3, 1])
-    with left:
-        if verdict == "ai":
-            st.error(f"### {word}")
-        elif verdict == "human":
-            st.success(f"### {word}")
-        else:
-            st.warning(f"### {word}")
-        if caption:
-            st.caption(caption)
-    with right:
-        st.metric("AI probability", "n/a" if probability is None else f"{probability:.1%}")
+    components.html(document(body), height=height, scrolling=True)
 
 
 # ------------------------------------------------------------------------------ text tab
@@ -144,45 +133,27 @@ def text_tab() -> None:
         return
 
     from forge.inference.decision import decide
+    from forge.ui.render import text_result
 
     scored = arm.score(text)
     decision = decide(scored.mean, arm.policy)
 
-    verdict_banner(
-        decision.verdict.value,
-        scored.mean,
-        f"{ARM_TITLE[choice]} · threshold {arm.policy.threshold:.4f} at a "
-        f"{arm.policy.fpr_budget:.1%} false-positive budget",
+    show(
+        text_result(
+            arm_label=ARM_TITLE[choice],
+            verdict=decision.verdict.value,
+            probability=scored.mean,
+            threshold=arm.policy.threshold,
+            fpr_budget=arm.policy.fpr_budget,
+            words=len(text.split()),
+            windows=scored.n_windows,
+            maximum=scored.maximum,
+            model_version=arm.policy.model_version,
+            val_fnr=arm.summary["val"].get("fnr"),
+            val_ece=arm.summary["val"].get("ece"),
+        ),
+        height=560,
     )
-
-    left, right = st.columns(2)
-    with left:
-        st.write("**How the document was scored**")
-        st.write(
-            {
-                "words": len(text.split()),
-                "windows": scored.n_windows,
-                "mean window probability": round(scored.mean, 4),
-                "highest window": round(scored.maximum, 4),
-            }
-        )
-        if scored.n_windows > 1:
-            st.caption(
-                "The document is scored in overlapping windows and the mean is the "
-                "document score. The highest single window is shown because a short "
-                "generated passage inside a long human document moves it and not the mean."
-            )
-    with right:
-        st.write("**The threshold this verdict used**")
-        st.write(
-            {
-                "threshold": round(arm.policy.threshold, 6),
-                "fitted at FPR budget": arm.policy.fpr_budget,
-                "validation FNR": arm.summary["val"].get("fnr"),
-                "validation ECE": arm.summary["val"].get("ece"),
-                "model version": arm.policy.model_version,
-            }
-        )
 
     st.info(
         "**These arms are in-distribution detectors.** On generators they never saw, the "
@@ -213,59 +184,26 @@ def image_tab() -> None:
         report = build_report(data, filename=upload.name, with_stability=False)
 
     payload = report.as_dict()
-    assessment = payload["assessment"]
 
-    left, right = st.columns([1, 2])
-    with left:
-        st.image(io.BytesIO(data), caption=upload.name, use_container_width=True)
-        st.caption(f"{len(data) / 1024:.0f} KB")
-
-    with right:
-        if assessment["available"]:
-            verdict_banner(
-                assessment["verdict"], assessment["confidence"], assessment.get("detail", "")
-            )
-        else:
-            st.warning(f"### No verdict\n{assessment['reason']}")
-            st.caption(assessment.get("detail", ""))
-
-        st.write("**Evidence**")
-        for stream in payload["evidence"]["streams"]:
-            mark = "—" if not stream["available"] else f"{stream['strength']}"
-            st.write(f"- **{stream['label']}**: {stream['summary']}  ({mark})")
-
-    from forge.image.detector import load_detector
-
+    # The attribution map needs the loaded detector, and it is simply omitted when there is
+    # none: an empty panel would read as "nothing drove the verdict", which is a different
+    # claim from "no detector ran".
+    attribution = None
     try:
-        detector = load_detector()
-    except Exception:  # noqa: BLE001 - the panel is simply omitted
-        detector = None
-
-    if detector is not None:
         from forge.image.attribution import occlusion_attribution
+        from forge.image.detector import load_detector
 
+        detector = load_detector()
+    except Exception:  # noqa: BLE001 - reported by the evidence panel, not here
+        detector = None
+    if detector is not None:
         with st.spinner("Measuring which regions the verdict rests on"):
-            attribution = occlusion_attribution(detector, data)
-        if attribution is not None:
-            st.write("**What the verdict rests on**")
-            st.markdown(
-                f'<img src="{attribution.png_data_uri}" style="max-width:520px;width:100%">',
-                unsafe_allow_html=True,
-            )
-            st.caption(
-                f"{attribution.grid}×{attribution.grid} occlusion. Score with everything "
-                f"visible {attribution.base_probability:.1%}; largest single drop when a "
-                f"region is hidden {attribution.peak['drop'] * 100:.1f} points. Measured by "
-                "hiding each region and re-scoring, not by a gradient approximation."
-            )
+            measured = occlusion_attribution(detector, data)
+        attribution = measured.as_dict() if measured is not None else None
 
-    with st.expander("File signals"):
-        for row in payload["authenticity"] + payload["provenance"]:
-            st.write(f"- **{row['label']}**: {row['value'] if row['value'] else 'not found'}")
+    from forge.ui.render import image_result
 
-    with st.expander("What this cannot conclude"):
-        for line in payload["cannot_conclude"]:
-            st.write(f"- {line}")
+    show(image_result(payload, attribution), height=1500 if attribution else 1100)
 
 
 # ---------------------------------------------------------------------------------- page
