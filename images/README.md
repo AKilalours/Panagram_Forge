@@ -8,15 +8,18 @@ unforced error that anyone can catch by running the detector on it.
 Capture each at a browser width of about 1600px, in dark mode, from the deployed app or
 from `streamlit run streamlit_app.py`.
 
+## In place
+
+| File | Shows |
+|---|---|
+| `text_verdict.png` | Text tab, both arms scored on one document, with the threshold each used |
+| `image_verdict.png` | Image tab, verdict banner plus evidence and file signals |
+| `image_robustness.png` | Eleven transforms re-scored against the original |
+| `image_attribution.png` | 5x5 occlusion attribution over the detector's tensor space |
+
+## Worth adding
+
 | File | What to capture |
 |---|---|
-| `text_verdict.png` | Text tab after analysing `demo/ai_smollm_01.txt`. Include the banner with the gauge AND both arm cards. |
-| `image_verdict.png` | Image tab after uploading a photograph. Include the banner and the Image / Evidence / File signals row. |
-| `image_attribution.png` | Image tab scrolled to the occlusion panel, with the Robustness chips visible above it if they fit. |
-
-Optional extras, if you want more in the README later:
-
-| File | What to capture |
-|---|---|
-| `image_details.png` | The expanded Details panel: manipulation analysis, provenance, timing. |
-| `text_missed.png` | A ChatGPT paragraph coming back NO AI DETECTED. This is the honest one, and the most interesting screenshot in the project. |
+| `text_missed.png` | A ChatGPT paragraph coming back NO AI DETECTED. The honest one, and the most interesting screenshot in the project: it shows the published 63-96% out-of-distribution miss rate happening live. |
+| `image_details.png` | The expanded Details panel: manipulation analysis, provenance, per-stage timing. |

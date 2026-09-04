@@ -116,26 +116,47 @@ tail without moving the ranking. On MAGE it did nothing at all.
 
 ## 🖥️ The Interface
 
+Two shells over the same detectors: a FastAPI reference page and a Streamlit page that is
+what deploys. Both render the same cards from the same payload against the same stylesheet,
+so they cannot drift into disagreeing with each other. The captures below are from the
+reference page.
+
 <div align="center">
-<img src="images/text_verdict.png" width="90%" alt="Text tab: both arms scored side by side"/>
+<img src="images/text_verdict.png" width="92%" alt="Text tab: both arms scored side by side"/>
 <br/>
-<em>Both arms scored on the same document, with the deployed threshold marked on the gauge and the limitation stated under the result</em>
+<em>Both arms scored on the same document. The headline is the deployed arm; the other sits
+beside it because the comparison IS the experiment. Every number a verdict rests on is on
+screen: the threshold, the budget it was fitted at, and that arm's validation FNR and ECE.</em>
 </div>
 
 <br/>
 
 <div align="center">
-<img src="images/image_verdict.png" width="90%" alt="Image tab: verdict, evidence and file signals"/>
+<img src="images/image_verdict.png" width="92%" alt="Image tab: verdict, evidence and file signals"/>
 <br/>
-<em>Image tab: declaration-first verdict logic, evidence streams, and a forensic breakdown that never invents a score</em>
+<em>Declaration-first verdict logic. The detector's own probability leads the evidence panel,
+supporting signals report a word rather than a percentage, and nothing here is combined into
+a single invented score.</em>
 </div>
 
 <br/>
 
 <div align="center">
-<img src="images/image_attribution.png" width="90%" alt="Occlusion attribution and robustness"/>
+<img src="images/image_robustness.png" width="92%" alt="Robustness across eleven transforms"/>
 <br/>
-<em>Occlusion attribution over the detector's own tensor space, and eleven transforms re-scored to test whether the verdict survives redistribution</em>
+<em>Eleven edits an image meets in the wild, each re-scored and compared against the
+original. "flipped" means that transform changes the answer. This asks whether the VERDICT
+survives redistribution, which is a different question from whether a forensic signal does.</em>
+</div>
+
+<br/>
+
+<div align="center">
+<img src="images/image_attribution.png" width="92%" alt="Occlusion attribution"/>
+<br/>
+<em>Occlusion attribution in the model's own preprocessed tensor space: each region is
+hidden and the image re-scored, so a warm cell is one the decision actually rested on.
+Measured, not gradient-approximated, so it holds for any detector the project loads.</em>
 </div>
 
 ### Three design rules the interface never breaks
