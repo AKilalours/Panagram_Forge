@@ -155,8 +155,7 @@ def image_tab() -> None:
 
 st.title("FORGE Detect")
 st.caption(
-    "Failure-driven synthetic data generation for robust AI-content detection. "
-    "Runs on CPU. Built by Akila Lourdes Miriyala Francis."
+    "Failure-driven synthetic data generation for robust AI-content detection. Runs on CPU."
 )
 
 text_pane, image_pane = st.tabs(["Text", "Image"])
@@ -166,9 +165,12 @@ with image_pane:
     image_tab()
 
 st.divider()
+# THE FOOTER SAID SOMETHING FALSE. It explained that one arm was held in memory at a time,
+# which was true of an earlier draft of this page and stopped being true when both arms were
+# restored. A page that describes its own behaviour incorrectly is the same defect as a
+# verdict that does not match its evidence, and this project has shipped that often enough
+# to know it. The byline is what belongs here; the memory constraint is an implementation
+# note and lives in the module docstring.
 st.caption(
-    "One text arm is held in memory at a time here, because this host allows about 2.7 GB "
-    "and each arm is roughly 740 MB in float32. The side-by-side comparison of the two arms "
-    "is the experiment's result and is reported in docs/evaluation.md. "
-    "Source: github.com/AKilalours/Panagram_Forge"
+    "Built by Akila Lourdes Miriyala Francis · github.com/AKilalours/Panagram_Forge"
 )

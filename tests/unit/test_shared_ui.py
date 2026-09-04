@@ -311,3 +311,18 @@ def test_the_image_boundary_comes_from_the_band_the_assessment_reports():
     assert _image_threshold({"band": "[0.312, 0.437)"}) == 0.437
     assert _image_threshold({"band": None}) is None
     assert _image_threshold({"band": "nonsense"}) is None
+
+
+def test_the_streamlit_page_does_not_describe_behaviour_it_no_longer_has():
+    """THE REGRESSION. The footer claimed one arm was held in memory at a time.
+
+    That was true of an earlier draft and stopped being true when both arms were restored.
+    A page that describes its own behaviour incorrectly is the same defect as a verdict that
+    contradicts its evidence, and it is worse in a footer, where nobody looks again.
+    """
+    from pathlib import Path
+
+    page = (Path(__file__).resolve().parents[2] / "streamlit_app.py").read_text(encoding="utf-8")
+    footer = page[page.index("st.divider()"):]
+    assert "one text arm is held in memory" not in footer.lower()
+    assert "Built by Akila Lourdes Miriyala Francis" in footer
