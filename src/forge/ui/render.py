@@ -94,8 +94,132 @@ def _stream_row(stream: dict) -> str:
   <div class="sub">{esc(stream.get('summary'))}{tag}</div></div>"""
 
 
-def image_result(payload: dict, attribution: dict | None = None) -> str:
-    """The image tab's cards, from `Report.as_dict()` plus an optional attribution map."""
+TIMING_ORDER = ("preview", "detector", "forensics", "perceptual_hash", "evidence",
+                "attribution", "forensic_maps", "detector_robustness")
+TIMING_NAME = {"preview": "Preview", "detector": "Detector inference",
+               "forensics": "Forensic analysis", "perceptual_hash": "Perceptual hash",
+               "evidence": "Evidence engine", "attribution": "Attribution map",
+               "forensic_maps": "Pixel diagnostics", "detector_robustness": "Robustness"}
+
+
+def _tech_row(row: dict) -> str:
+    """A manipulation row: the categorical grade, then the raw statistic, then the caveat.
+
+    The raw number is shown UNDER the grade rather than as the value, because a reader who
+    sees "0.361" beside "Recompression" will read it as a probability. It is not one.
+    """
+    pill = (f'<span class="pill {_pill_class(row["status"])}">{esc(_pill_label(row["status"]))}</span>'
+            if row.get("status") else '<span class="pill na">not available</span>')
+    value = (f'<div class="tech">raw statistic {esc(row["value"])}</div>'
+             if row.get("value") not in (None, "") else "")
+    note = f'<div class="tech">{esc(row["note"])}</div>' if row.get("note") else ""
+    return (f'<div class="techrow"><div class="row"><span class="k">{esc(row["label"])}</span>'
+            f'<span class="v">{pill}</span></div>{value}{note}</div>')
+
+
+def _robustness_card(rows: list[dict]) -> str:
+    """Does the VERDICT survive the transforms an image meets in the wild?
+
+    Distinct from signal stability, which asks whether a forensic SIGNAL survives. A signal
+    can vanish while the verdict holds, and the verdict can flip while every signal is
+    intact. Reporting one as the other is the mistake this panel exists to avoid.
+    """
+    if not rows:
+        return ""
+    scored = [r for r in rows if not r.get("error")]
+    held = sum(1 for r in scored if not r.get("changed"))
+    chips = []
+    for row in rows:
+        if row.get("error"):
+            chips.append(f'<div class="chip"><div class="n">{esc(row["attack"])}</div>'
+                         '<div class="d">failed</div></div>')
+            continue
+        flipped = bool(row.get("changed"))
+        delta = ("" if row["attack"] == "original" else
+                 f' · {"+" if row["delta"] >= 0 else ""}{row["delta"] * 100:.1f} pts')
+        chips.append(
+            f'<div class="chip"><div class="n">{esc(row["attack"])}'
+            f'<span class="pill {"hot" if flipped else "ok"}">'
+            f'{"flipped" if flipped else "held"}</span></div>'
+            f'<div class="d">{row["ai_probability"] * 100:.1f}%{delta}</div></div>'
+        )
+    return (
+        f'<div class="card wide"><h3>Robustness <span class="sum">{held} of {len(scored)} '
+        'edits keep the same verdict</span></h3>'
+        '<p class="caveat" style="margin:0 0 12px">Every edit is re-scored and compared with '
+        'the original. "flipped" means that edit changes the answer.</p>'
+        f'<div class="rgrid">{"".join(chips)}</div></div>'
+    )
+
+
+def _attribution_card(attribution: dict | None) -> str:
+    if not attribution or not attribution.get("image"):
+        return ""
+    peak = attribution["peak"]
+    reading = attribution.get("reading") or ""
+    return f"""<div class="card wide">
+  <h3>What the verdict rests on <span class="sum">{attribution['grid']}×{attribution['grid']} occlusion</span></h3>
+  <div class="attr"><img src="{attribution['image']}" alt="attribution map">
+    <div><p class="caveat">{esc(reading)}</p>
+      <div class="row"><span class="k">Score with everything visible</span>
+        <span class="v">{attribution['base_probability'] * 100:.1f}%</span></div>
+      <div class="row"><span class="k">Largest single drop when hidden</span>
+        <span class="v">{peak['drop'] * 100:.1f} pts</span></div>
+      <p class="caveat">Measured by hiding each region and re-scoring, not by a gradient
+      approximation, so it holds for any detector this project loads.</p>
+    </div></div></div>"""
+
+
+def _maps_card(maps: list[dict]) -> str:
+    if not maps:
+        return ""
+    figures = "".join(
+        f'<figure><img src="{m["image"]}" alt="{esc(m["title"])}">'
+        f'<figcaption><b>{esc(m["title"])}</b><br>'
+        f'{esc(m.get("short") or m.get("what_it_shows"))}</figcaption></figure>'
+        for m in maps
+    )
+    return ('<details class="card wide fold" open><summary>Pixel statistics</summary>'
+            f'<div class="foldbody"><div class="maps">{figures}</div>'
+            '<p class="caveat">Computed from the file without any model. The attribution '
+            'panel above is what the detector used.</p></div></details>')
+
+
+def _details_card(payload: dict) -> str:
+    timings = payload.get("timings_ms") or {}
+    elapsed = payload.get("elapsed_ms") or 0
+    timing_rows = "".join(
+        f'<div class="row"><span class="k">{esc(TIMING_NAME.get(k, k))}</span>'
+        f'<span class="v">{timings[k]:,} ms</span></div>'
+        for k in TIMING_ORDER if k in timings
+    )
+    detector = payload.get("detector") or {}
+    footer = (f'<p class="tech">Detector {esc(detector.get("model_id"))}, uncalibrated '
+              "baseline.</p>" if detector.get("available") else "")
+    return (
+        f'<details class="card wide fold"><summary>Details '
+        f'<span class="sum">{elapsed / 1000:.1f} s on CPU</span></summary>'
+        '<div class="foldbody"><h3>Manipulation analysis</h3>'
+        + "".join(_tech_row(r) for r in payload.get("manipulation", []))
+        + '<h3 style="margin-top:18px">Provenance</h3>'
+        + "".join(_row(r["label"], r["value"], r.get("status"))
+                  for r in payload.get("provenance", []))
+        + '<h3 style="margin-top:18px">Timing</h3>'
+        + timing_rows
+        + _row("Total", f"{elapsed:,} ms")
+        + footer
+        + "</div></details>"
+    )
+
+
+def image_result(payload: dict) -> str:
+    """The image tab, section for section as the FastAPI page renders it.
+
+    Banner, then the three-card grid, then robustness, attribution, pixel statistics and
+    details. The order is not decoration: the verdict is first, what it rests on comes
+    before the model-free statistics, and the statistics are folded because a reader who
+    opens them should have already seen the panel that says which one the detector used.
+    """
     assessment = payload["assessment"]
     evidence = payload["evidence"]
     streams = evidence.get("streams", [])
@@ -113,61 +237,44 @@ def image_result(payload: dict, attribution: dict | None = None) -> str:
 
     preview = (f'<img class="prev" src="{payload["preview"]}" alt="preview">'
                if payload.get("preview") else "")
-    size_kb = f'{payload["size_bytes"] / 1024:.0f} KB'
     image_card = (
         f'<div class="card"><h3>Image</h3>{preview}<div style="margin-top:11px">'
-        f'{_row("File", payload.get("filename"))}{_row("Size", size_kb)}</div></div>'
+        + _row("File", payload.get("filename"))
+        + _row("Size", f'{payload["size_bytes"] / 1024:.0f} KB')
+        + "</div></div>"
     )
 
+    conflict = evidence.get("conflict")
+    conflict_note = ("" if conflict == "low" else
+                     f'<p class="caveat">{esc(evidence.get("conflict_reason"))}</p>')
     evidence_card = (
         '<div class="card"><h3>Evidence</h3><div class="grouplabel">Detector</div>'
         + (_stream_row(primary) if primary else "")
         + '<div class="grouplabel">Supporting signals</div>'
         + "".join(_stream_row(s) for s in supporting)
-        + f'<div class="row"><span class="k">Agreement</span>'
-          f'<span class="v"><span class="pill {"ok" if evidence.get("conflict") == "low" else "warn"}">'
-          f'{esc("consistent" if evidence.get("conflict") == "low" else evidence.get("conflict"))}'
-          f'</span></span></div></div>'
+        + '<div class="row" style="margin-top:8px"><span class="k">Agreement</span>'
+        f'<span class="v"><span class="pill {_pill_class(conflict)}">'
+        f'{esc("consistent" if conflict == "low" else conflict)}</span></span></div>'
+        + conflict_note
+        + "</div>"
     )
 
     signals_card = (
         '<div class="card"><h3>File signals</h3>'
-        + "".join(_row(r["label"], r["value"], r.get("status")) for r in payload["authenticity"])
-        + "".join(_row(r["label"], r["value"], r.get("status")) for r in payload["provenance"])
+        + "".join(_row(r["label"], r["value"], r.get("status"))
+                  for r in payload.get("authenticity", []))
         + "</div>"
     )
 
-    cards = f'<div class="grid">{image_card}{evidence_card}{signals_card}</div>'
-
-    attribution_card = ""
-    if attribution and attribution.get("image"):
-        peak = attribution["peak"]
-        attribution_card = f"""<div class="grid"><div class="card wide">
-  <h3>What the verdict rests on <span class="sum">{attribution['grid']}×{attribution['grid']} occlusion</span></h3>
-  <div class="attr"><img src="{attribution['image']}" alt="attribution map">
-    <div>
-      <div class="row"><span class="k">Score with everything visible</span>
-        <span class="v">{attribution['base_probability'] * 100:.1f}%</span></div>
-      <div class="row"><span class="k">Largest single drop when hidden</span>
-        <span class="v">{peak['drop'] * 100:.1f} pts</span></div>
-      <p class="caveat">Measured by hiding each region and re-scoring, not by a gradient
-      approximation, so it holds for any detector this project loads.</p>
-    </div></div></div></div>"""
-
-    limits = "".join(f"<li>{esc(line)}</li>" for line in payload.get("cannot_conclude", []))
-    limits_card = (
-        f'<div class="grid"><div class="card wide"><h3>What this cannot conclude</h3>'
-        f'<ul class="lim">{limits}</ul></div></div>' if limits else ""
+    return head + (
+        '<div class="grid">'
+        + image_card + evidence_card + signals_card
+        + _robustness_card(payload.get("robustness") or [])
+        + _attribution_card(payload.get("attribution_map"))
+        + _maps_card(payload.get("maps") or [])
+        + _details_card(payload)
+        + "</div>"
     )
-
-    manipulation = "".join(_row(r["label"], r["value"], r.get("status"))
-                           for r in payload.get("manipulation", []))
-    details = (
-        f'<div class="grid"><div class="card wide"><h3>Manipulation analysis</h3>{manipulation}</div></div>'
-        if manipulation else ""
-    )
-
-    return head + cards + attribution_card + details + limits_card
 
 
 def _spark(windows: list[float]) -> str:

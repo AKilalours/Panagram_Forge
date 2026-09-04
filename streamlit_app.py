@@ -21,7 +21,6 @@ in docs/evaluation.md, where it belongs; a live page is not the place that findi
 
 from __future__ import annotations
 
-import io
 import os
 import pathlib
 import sys
@@ -117,42 +116,39 @@ def text_tab() -> None:
 # ----------------------------------------------------------------------------- image tab
 
 def image_tab() -> None:
-    st.subheader("Image")
     upload = st.file_uploader(
-        "Drop an image",
+        "Drop an image, or click to choose one",
         type=["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "mpo"],
-        help="Analysed in memory. Nothing is written to disk or sent anywhere.",
+        help="JPEG, PNG, WEBP, TIFF, BMP, GIF, MPO. Analysed in memory, never written to disk.",
     )
     if upload is None:
         return
 
-    data = upload.read()
-    from forge.image.report import build_report
-
-    with st.spinner("Analysing"):
-        report = build_report(data, filename=upload.name, with_stability=False)
-
-    payload = report.as_dict()
-
-    # The attribution map needs the loaded detector, and it is simply omitted when there is
-    # none: an empty panel would read as "nothing drove the verdict", which is a different
-    # claim from "no detector ran".
-    attribution = None
-    try:
-        from forge.image.attribution import occlusion_attribution
-        from forge.image.detector import load_detector
-
-        detector = load_detector()
-    except Exception:  # noqa: BLE001 - reported by the evidence panel, not here
-        detector = None
-    if detector is not None:
-        with st.spinner("Measuring which regions the verdict rests on"):
-            measured = occlusion_attribution(detector, data)
-        attribution = measured.as_dict() if measured is not None else None
-
+    from forge.image.analysis import UnsupportedImage, analyse
     from forge.ui.render import image_result
 
-    show(image_result(payload, attribution), height=1500 if attribution else 1100)
+    data = upload.read()
+    # The SAME analysis the FastAPI route runs, from forge.image.analysis: forensics,
+    # detector, robustness over eleven edits, occlusion attribution and the pixel maps. It
+    # is the slowest thing on this page at roughly fifteen seconds on two CPUs, and that is
+    # the honest cost of computing every panel rather than asserting one.
+    with st.spinner("Analysing. Forensics, detector, robustness over 11 edits, attribution."):
+        try:
+            payload = analyse(data, filename=upload.name, with_stability=False)
+        except UnsupportedImage as refusal:
+            st.error(str(refusal))
+            return
+
+    # The embed is an iframe with a fixed height, so it is sized from what actually
+    # rendered rather than one guessed number: a page cut off mid-card reads as a bug.
+    height = 1150
+    if payload.get("robustness"):
+        height += 260
+    if payload.get("attribution_map"):
+        height += 620
+    if payload.get("maps"):
+        height += 620
+    show(image_result(payload), height=height)
 
 
 # ---------------------------------------------------------------------------------- page

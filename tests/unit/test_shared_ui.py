@@ -24,15 +24,30 @@ def _payload(**overrides) -> dict:
         "evidence": {"conflict": "low", "streams": [
             {"key": "visual_model", "label": "Visual detector", "strength": 98,
              "state": "detected", "direction": "toward_capture",
-             "summary": "P(AI) = 0.94%", "available": True},
+             "summary": "P(AI) = 0.92%", "available": True},
             {"key": "camera", "label": "Camera metadata", "strength": 50, "state": "partial",
              "direction": "neutral", "summary": "4 fields, partial", "available": True},
         ]},
         "authenticity": [{"label": "Camera", "value": "Canon EOS R6", "status": "present"}],
-        "provenance": [{"label": "C2PA signature", "value": None, "status": "not_found"}],
-        "manipulation": [],
+        "provenance": [{"label": "EXIF block", "value": "4 fields", "status": "present"}],
+        "manipulation": [{"label": "Recompression", "value": 0.361, "status": "high",
+                          "note": "error level analysis responds to any re-encode"}],
         "cannot_conclude": ["Whether this image was generated, with confidence."],
         "preview": None, "filename": "a.jpg", "size_bytes": 3050000,
+        "elapsed_ms": 15555,
+        "timings_ms": {"preview": 126, "detector": 698, "forensics": 2742,
+                       "detector_robustness": 10219},
+        "detector": {"available": True, "model_id": "umm-maybe/AI-image-detector"},
+        "robustness": [
+            {"attack": "original", "ai_probability": 0.009, "delta": 0.0, "changed": False},
+            {"attack": "jpeg_25", "ai_probability": 0.011, "delta": 0.002, "changed": False},
+            {"attack": "crop_80", "ai_probability": 0.9, "delta": 0.891, "changed": True},
+        ],
+        "attribution_map": {"grid": 5, "image": "data:image/png;base64,AA",
+                            "base_probability": 0.009, "peak": {"drop": 0.0004},
+                            "reading": "Each cell is the drop in AI probability."},
+        "maps": [{"image": "data:image/png;base64,AA", "title": "Compression residual",
+                  "short": "Change on re-encoding."}],
     }
     base.update(overrides)
     return base
@@ -105,11 +120,8 @@ def test_a_stream_without_a_state_raises_rather_than_rendering_an_empty_pill():
 def test_the_attribution_panel_is_absent_rather_than_empty_without_a_detector():
     """An empty panel reads as "nothing drove the verdict", a different claim from "no
     detector ran"."""
-    assert "occlusion" not in image_result(_payload(), None)
-    assert "occlusion" in image_result(
-        _payload(), {"grid": 5, "image": "data:image/png;base64,AA",
-                     "base_probability": 0.009, "peak": {"drop": 0.004}}
-    )
+    assert "occlusion" not in image_result(_payload(attribution_map=None))
+    assert "occlusion" in image_result(_payload())
 
 
 def _arm(name: str, label: str, verdict: str = "human", probability: float = 0.0001) -> dict:
@@ -182,3 +194,78 @@ def test_no_arm_loaded_produces_no_number_at_all():
     assert "No verdict" in html
     assert "would be fabricated" in html
     assert "%" not in html.split("scorenote")[0].split("score ")[-1][:40]
+
+
+# ------------------------------------------------- the image tab, section for section
+
+def test_the_image_page_carries_every_section_the_reference_page_has():
+    """The deployed page lost robustness, pixel statistics and the details panel.
+
+    The detection was identical and three panels of it were simply not rendered, which for
+    a portfolio piece is most of what a reviewer looks at.
+    """
+    html = image_result(_payload())
+    for section in ("Robustness", "What the verdict rests on", "Pixel statistics",
+                    "Details", "Manipulation analysis", "Provenance", "Timing"):
+        assert section in html, f"the image page lost its {section!r} section"
+
+
+def test_robustness_counts_only_the_edits_that_scored():
+    """An edit that errored is neither held nor flipped, and must not pad the denominator."""
+    payload = _payload(robustness=[
+        {"attack": "original", "ai_probability": 0.01, "delta": 0.0, "changed": False},
+        {"attack": "jpeg_25", "ai_probability": 0.9, "delta": 0.89, "changed": True},
+        {"attack": "heic", "error": "no decoder"},
+    ])
+    html = image_result(payload)
+    assert "1 of 2 edits keep the same verdict" in html
+    assert "flipped" in html and "failed" in html
+
+
+def test_a_flipped_edit_is_marked_hot_not_quietly_listed():
+    """A transform that changes the answer is the finding this panel exists to surface."""
+    html = image_result(_payload())
+    chip = html[html.index("crop_80"):html.index("crop_80") + 200]
+    assert 'pill hot' in chip and "flipped" in chip
+
+
+def test_the_raw_statistic_is_never_the_value_of_a_manipulation_row():
+    """"Recompression 0.361" reads as a probability. It is not one.
+
+    The grade is the value; the number sits underneath, labelled as a raw statistic.
+    """
+    html = image_result(_payload())
+    row = html[html.index("Recompression"):html.index("Recompression") + 320]
+    assert "raw statistic 0.361" in row
+    assert ">0.361<" not in row
+
+
+def test_timings_are_ordered_and_totalled():
+    """A breakdown in dictionary order is not a breakdown a reader can follow."""
+    html = image_result(_payload())
+    # Search inside the Timing block only. "Robustness" is BOTH a card title and a timing
+    # row label, and the first version of this test found the card and called the order
+    # wrong on correct output.
+    timing = html[html.index("<h3 style=\"margin-top:18px\">Timing</h3>"):]
+    order = [timing.index(name) for name in
+             ("Preview", "Detector inference", "Forensic analysis", "Robustness")]
+    assert order == sorted(order), "the timing rows are out of pipeline order"
+    assert "15,555 ms" in html and "10,219 ms" in html
+
+
+def test_the_detector_is_named_and_called_uncalibrated():
+    """It has no validation split of its own. Saying otherwise was a shipped falsehood once."""
+    html = image_result(_payload())
+    assert "umm-maybe/AI-image-detector" in html
+    assert "uncalibrated baseline" in html
+
+
+def test_sections_that_have_no_data_are_absent_rather_than_empty():
+    """An empty robustness grid reads as "no edit held", which is a different claim."""
+    html = image_result(_payload(robustness=[], attribution_map=None, maps=[]))
+    # The CARD is gone; "Robustness" survives as a timing row label, which is why this
+    # asserts on the card's own text rather than on the word.
+    assert "edits keep the same verdict" not in html
+    assert "What the verdict rests on" not in html
+    assert "Pixel statistics" not in html
+    assert "Details" in html, "the details panel does not depend on the optional sections"

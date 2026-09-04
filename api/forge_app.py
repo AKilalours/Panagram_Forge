@@ -49,34 +49,22 @@ Run:  python -m uvicorn api.forge_app:app --port 8000
 
 from __future__ import annotations
 
-import base64
-import io
-
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from forge.image.maps import build_maps
-from forge.image.report import build_report
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
 MAX_TEXT_CHARS = 50_000
+
 # MPO is a JPEG container holding more than one frame: dual-lens phones and 3D cameras
 # write it, and so does every iPhone that captures depth. Rejecting it turned away ordinary
 # photographs, which is the exact population this project exists to protect from false
 # accusations, and it was rejected by an allowlist rather than by anything measured.
-# Analysis reads frame 0; real_format says so when there is more than one.
-ACCEPTED = {"JPEG", "PNG", "WEBP", "TIFF", "BMP", "GIF", "MPO"}
-
-# Formats a phone commonly writes that Pillow cannot open without an extra decoder. Named
-# separately so the user is told what to do instead of being told the file is unreadable.
-NEEDS_DECODER = {
-    "HEIC": "HEIF images need the pillow-heif decoder; export as JPEG, or install it",
-    "HEIF": "HEIF images need the pillow-heif decoder; export as JPEG, or install it",
-    "AVIF": "AVIF images need an AVIF decoder; export as JPEG or PNG, or install one",
-}
-
-app = FastAPI(title="FORGE", version="0.2.0")
+# The list and the decoder hints live with the analysis in forge.image.analysis now that
+# the Streamlit page performs the same analysis; they are re-exported here because the
+# page's copy names the formats and the tests import them from this module.
+from forge.image.analysis import ACCEPTED, NEEDS_DECODER  # noqa: E402,F401
 
 
 @app.get("/health")
@@ -111,84 +99,30 @@ def health() -> dict:
     }
 
 
-def _thumbnail(data: bytes, box: int = 640) -> str | None:
-    """A downscaled preview as a data URI. Uploads are never written to disk."""
-    try:
-        from PIL import Image
-
-        with Image.open(io.BytesIO(data)) as img:
-            img = img.convert("RGB")
-            img.thumbnail((box, box))
-            buffer = io.BytesIO()
-            img.save(buffer, format="JPEG", quality=84)
-        return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
-    except Exception:  # noqa: BLE001
-        return None
-
-
 @app.post("/v1/image/analyze")
 async def analyze_image(
     file: UploadFile = File(...),
     stability: bool = False,
 ) -> JSONResponse:
-    """Analyse one image. The transform-survival pass is opt-in.
+    """Analyse one image. The work lives in forge.image.analysis.
 
-    That pass re-encodes the image ten times and is roughly 35 of the 39 seconds a 2.8 MB
-    JPEG used to take. It answers a second-order question, "would these signals survive
-    redistribution", so it runs on request rather than on every upload. Its absence is
-    reported as absence: `stability_available` is False, never an empty list that reads as
-    "nothing survived".
+    It moved there when the Streamlit deployment needed the same payload in-process. This
+    route keeps what is genuinely HTTP: the size limit, and turning a refusal into a status
+    code rather than an exception.
     """
+    from forge.image.analysis import UnsupportedImage, analyse
+
     data = await file.read()
     if not data:
         raise HTTPException(status_code=400, detail="empty upload")
     if len(data) > MAX_IMAGE_BYTES:
         raise HTTPException(status_code=413, detail=f"file exceeds {MAX_IMAGE_BYTES} bytes")
 
-    import time
-
-    mark = time.perf_counter()
-    preview = _thumbnail(data)
-    preview_ms = int((time.perf_counter() - mark) * 1000)
-
-    report = build_report(
-        data, filename=file.filename or "upload", preview=preview,
-        with_stability=stability,
-    )
-    fmt = report.by_name("file_type")
-    detected = fmt.value if fmt else None
-    if detected not in ACCEPTED:
-        hint = NEEDS_DECODER.get(str(detected or "").upper())
-        raise HTTPException(
-            status_code=415,
-            detail=(
-                f"cannot read this file (detected: {detected}). {hint}"
-                if hint
-                else f"unsupported or unreadable image (detected: {detected}). "
-                f"Supported: {', '.join(sorted(ACCEPTED))}."
-            ),
-        )
-
-    # Forensic residual maps. NOT model saliency: no model is involved, and the panel says
-    # so. They show where in this frame each signal is strong, normalized within the frame,
-    # which is a thing a reader can go and check by looking. A map that cannot be computed
-    # is omitted rather than faked, so this list can legitimately be short or empty.
-    payload = report.as_dict()
-    mark = time.perf_counter()
-    payload["maps"] = build_maps(data)
-    payload["timings_ms"] = dict(payload.get("timings_ms") or {})
-    payload["timings_ms"]["preview"] = preview_ms
-    payload["timings_ms"]["forensic_maps"] = int((time.perf_counter() - mark) * 1000)
-    payload["maps_note"] = (
-        "Forensic residual maps, not detector saliency. No model is involved. Each map is "
-        "normalized within this image, so brightness is relative to this frame and is not "
-        "comparable across images."
-    )
+    try:
+        payload = analyse(data, filename=file.filename or "upload", with_stability=stability)
+    except UnsupportedImage as refusal:
+        raise HTTPException(status_code=415, detail=str(refusal)) from refusal
     return JSONResponse(payload)
-
-
-class TextRequest(BaseModel):
-    text: str = Field(min_length=1, max_length=MAX_TEXT_CHARS)
 
 
 @app.post("/v1/text/analyze")
